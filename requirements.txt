@@ -13,3 +13,6 @@ tensorflow==2.16.1
 tensorflow-io-gcs-filesystem==0.37.0
 textblob==0.18.0.post0
 yfinance==0.2.40
+spacy==3.7.4
+spacy-legacy==3.0.12
+spacy-loggers==1.0.5
