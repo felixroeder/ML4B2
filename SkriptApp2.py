@@ -114,9 +114,11 @@ def build_transformer_model():
   company_embedding = company_embedding_layer(company_input)
 
   # Combine all inputs
-  combined = np.concatenate(axis=-1)([bert_input, price_input, company_embedding, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input, fundamentals_input])
-
-  # Transformer block
+  combined = tf.keras.layers.Concatenate(axis=-1)(
+        [bert_input, price_input, company_embedding, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input, fundamentals_input]
+  )  
+  
+# Transformer block
   class TransformerBlock(tf.keras.layers.Layer):
     def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
       super(TransformerBlock, self).__init__()
