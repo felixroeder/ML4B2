@@ -15,7 +15,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 
 # Initialize Spacy model
-nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("en_core_web_sm", disable=["lemmatizer"])  # Disable pre-loaded lemmatizer
 
 # Initialize BERT model and tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
@@ -29,7 +29,7 @@ sp500_tickers = sp500_companies['Symbol'].tolist()
 
 # Define preprocessing functions
 stop_words = set(nlp.Defaults.stop_words)
-lemmatizer = nlp.vocab.morphology.lemmatizer
+
 
 def preprocess_text(text):
   text = re.sub(r'[^a-zA-Z\s]', '', text, re.I | re.A)
@@ -114,7 +114,7 @@ def build_transformer_model():
   company_embedding = company_embedding_layer(company_input)
 
   # Combine all inputs
-  combined = np.Concatenate(axis=-1)([bert_input, price_input, company_embedding, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input, fundamentals_input])
+  combined = np.concatenate(axis=-1)([bert_input, price_input, company_embedding, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input, fundamentals_input])
 
   # Transformer block
   class TransformerBlock(tf.keras.layers.Layer):
