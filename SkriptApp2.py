@@ -98,6 +98,7 @@ def build_transformer_model():
   bert_dim = 768  # BERT embedding dimension
   tfidf_dim = 5000  # TF-IDF dimension
   topic_dim = 10  # Number of topics
+  combined_dim = 300 # Dimension after combining inputs 
 
   bert_input = tf.keras.layers.Input(shape=(look_back, bert_dim), name='bert_input')
   price_input = tf.keras.layers.Input(shape=(look_back, 1), name='price_input')
@@ -113,10 +114,20 @@ def build_transformer_model():
   company_embedding_layer = tf.keras.layers.Embedding(input_dim=len(sp500_tickers) + 1, output_dim=10, name='company_embedding')
   company_embedding = company_embedding_layer(company_input)
 
+  # Reduce dimensions of inputs before concatenation (Modified lines)
+  bert_proj = tf.keras.layers.Dense(combined_dim, activation='relu')(bert_input)
+  entities_proj = tf.keras.layers.Dense(combined_dim, activation='relu')(entities_input)
+  tfidf_proj = tf.keras.layers.Dense(combined_dim, activation='relu')(tfidf_input)
+  topics_proj = tf.keras.layers.Dense(combined_dim, activation='relu')(topics_input)
+  fundamentals_proj = tf.keras.layers.Dense(combined_dim, activation='relu')(fundamentals_input)
+
   # Combine all inputs
   combined = tf.keras.layers.Concatenate(axis=-1)(
-        [bert_input, price_input, company_embedding, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input, fundamentals_input]
+        [bert_proj, price_input, company_embedding, entities_proj, sentiment_input, tfidf_proj, topics_proj, relevance_input, fundamentals_proj]
   )  
+
+  # Add a dense layer to reduce dimension to the required input size for the Transformer block
+  combined_proj = tf.keras.layers.Dense(32, activation='relu')(combined)
   
 # Transformer block
   class TransformerBlock(tf.keras.layers.Layer):
@@ -133,6 +144,7 @@ def build_transformer_model():
       self.dropout2 = tf.keras.layers.Dropout(rate)
 
     def call(self, inputs, training):
+
       attn_output = self.att(inputs, inputs)
       attn_output = self.dropout1(attn_output, training=training)
       out1 = self.layernorm1(inputs + attn_output)
@@ -140,12 +152,12 @@ def build_transformer_model():
       ffn_output = self.dropout2(ffn_output, training=training)
       return self.layernorm2(out1 + ffn_output)
 
-  embed_dim = 32  # Embedding size for each token
+  embed_dim = combined_dim  # Embedding size for each token
   num_heads = 2  # Number of attention heads
-  ff_dim = 32  # Hidden layer size in feed forward network inside transformer
+  ff_dim = 300  # Hidden layer size in feed forward network inside transformer
 
   transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
-  x = transformer_block(combined)
+  x = transformer_block(combined_proj)
 
   # Regularization
   x = tf.keras.layers.Dropout(0.2)(x)
