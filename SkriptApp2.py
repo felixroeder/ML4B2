@@ -1,10 +1,6 @@
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.layers import Input, Embedding, Dense, Concatenate, LayerNormalization, Dropout, Lambda
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
-import tensorflow.keras.backend as K
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 import yfinance as yf
@@ -14,6 +10,10 @@ import spacy
 from textblob import TextBlob
 from transformers import BertTokenizer, TFBertModel
 import re
+import pandas as pd
+from bs4 import BeautifulSoup
+import streamlit as st
+import matplotlib.pyplot as plt
 
 # Initialize Spacy model
 nlp = spacy.load("en_core_web_sm")
@@ -154,7 +154,7 @@ def build_transformer_model():
   for company in sp500_tickers:
     mean_output = tf.keras.layers.Dense(1, activation='linear', name=f'output_mean_{company}')(x)
     log_var_output = tf.keras.layers.Dense(1, activation='linear', name=f'output_log_var_{company}')(x)
-    std_output = tf.keras.layers.Lambda(lambda t: K.exp(0.5 * t), name=f'output_std_{company}')(log_var_output)
+    std_output = tf.keras.layers.Lambda(lambda t: tf.keras.backend.K.exp(0.5 * t), name=f'output_std_{company}')(log_var_output)
     outputs[f'output_mean_{company}'] = mean_output
     outputs[f'output_std_{company}'] = std_output
 
@@ -177,9 +177,6 @@ model.save('retrained_model.h5')
 
 #################################################################################
 
-import requests
-import pandas as pd
-from bs4 import BeautifulSoup
 
 def fetch_gdelt_news(query, from_date, to_date):
   base_url = 'https://api.gdeltproject.org/api/v2/doc/doc?query={query}%20sourceCountry:US&mode=artlist&maxrecords=250&sort=datedesc&format=json'
@@ -202,20 +199,6 @@ print(articles)
 
 #################################################################################
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import yfinance as yf
-import tensorflow as tf
-from transformers import BertTokenizer, TFBertModel
-from textblob import TextBlob
-import spacy
-import matplotlib.pyplot as plt
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.decomposition import LatentDirichletAllocation
-import re
-import requests
-from bs4 import BeautifulSoup
 
 # Initialize Spacy model
 nlp = spacy.load("en_core_web_sm")
@@ -284,7 +267,7 @@ def fetch_gdelt_news(query):
 
 # Function to fetch stock prices
 def fetch_stock_prices(ticker, start_date, end_date):
-  stock_data = yf.download(ticker, start=start_date, end=end-date)
+  stock_data = yf.download(ticker, start=start_date, end=end_date)
   return stock_data
 
 # Function to fetch fundamental data
@@ -342,13 +325,13 @@ if st.sidebar.button("Predict"):
     "company": np.array([sp500_tickers.index(selected_company)] * look_back),
     "entities": np.array([entity_features] * look_back),
     "sentiment": np.array([[sentiment]] * look_back),
-    "tfidf": np.array([tfidf_matrix] * look back).reshape(look_back, -1),
-    "topics": np.array([topics_matrix] * look back).reshape(look_back, -1),
-    "relevance": np.array([[relevance]] * look back),
-    "fundamentals": np.array([[fundamentals["PE_Ratio"], fundamentals["EPS"], fundamentals["Revenue"], fundamentals["Market_Cap"]]] * look back)
-  }
+    "tfidf": np.array([tfidf_matrix] * look_back).reshape(look_back, -1),
+    "topics": np.array([topics_matrix] * look_back).reshape(look_back, -1),
+    "relevance": np.array([[relevance]] * look_back),
+    "fundamentals": np.array([[fundamentals["PE_Ratio"], fundamentals["EPS"], fundamentals["Revenue"], fundamentals["Market_Cap"]]] * look_back)
+    } 
 
-  new_input is [
+  new_input = [
     np.array([new_sequence["bert"]]),
     np.array([new_sequence["price"]]),
     np.array([new_sequence["company"]]),
@@ -361,29 +344,28 @@ if st.sidebar.button("Predict"):
   ]
 
   # Make prediction
-  predictions is model.predict(new_input)
-  predicted_mean is predictions[f'output_mean_{selected_company}'].flatten()[0]
-  predicted_std is predictions[f'output_std_{selected_company}'].flatten()[0]
+  predictions = model.predict(new_input)
+  predicted_mean = predictions[f'output_mean_{selected_company}'].flatten()[0]
+  predicted_std = predictions[f'output_std_{selected_company}'].flatten()[0]
 
   # Calculate confidence intervals
-  confidence_interval_95 is (predicted_mean - 1.96 * predicted_std, predicted_mean + 1.96 * predicted_std)
+  confidence_interval_95 = (predicted_mean - 1.96 * predicted_std, predicted_mean + 1.96 * predicted_std)
 
   # Determine the price direction
-  direction is "up" if predicted_mean > latest_price else "down"
-  arrow is "⬆️" if direction is "up" else "⬇️"
-  arrow_color is "green" if direction is "up" else "red"
+  direction = "up" if predicted_mean > latest_price else "down"
+  arrow = "⬆️" if direction is "up" else "⬇️"
+  arrow_color = "green" if direction is "up" else "red"
 
   # Display results
   st.write(f"Predicted future price for {selected_company}: {predicted_mean} {arrow}")
   st.write(f"95% Confidence Interval: {confidence_interval_95}")
   st.write(f"Relevance: {relevance}")
   st.write(f"Sentiment: {sentiment}")
-  st.write(f"Entities: {entities}")
 
 # Display latest news articles
 st.title("Latest News Articles")
-news_articles is fetch_gdelt_news(selected_company)
-latest_news is pd.DataFrame(news_articles)
+news_articles = fetch_gdelt_news(selected_company)
+latest_news = pd.DataFrame(news_articles)
 
 for index, row in latest_news.iterrows():
   with st.expander(row['title']):
@@ -393,7 +375,7 @@ for index, row in latest_news.iterrows():
     st.write(f"URL: [Link]({row['url']})")
 
 # Fetch predictions for all companies to find the highest percentual changes
-predicted_changes is []
+predicted_changes = []
 for ticker in sp500_tickers:
   stock_data is fetch_stock_prices(ticker, pd.Timestamp.today().strftime('%Y-%m-%d'), pd.Timestamp.today().strftime('%Y-%m-%d'))
   if not stock_data.empty:
@@ -401,15 +383,15 @@ for ticker in sp500_tickers:
 
     # Prepare input for model prediction
     new_sequence is {
-      "bert": np.array([bert_embeddings] * look back),
-      "price": np.array([[latest_price]] * look back),
-      "company": np.array([sp500_tickers.index(ticker)] * look back),
-      "entities": np.array([entity_features] * look back),
-      "sentiment": np.array([[sentiment]] * look back),
-      "tfidf": np.array([tfidf_matrix] * look back).reshape(look back, -1),
-      "topics": np.array([topics_matrix] * look back).reshape(look back, -1),
-      "relevance": np.array([[relevance]] * look back),
-      "fundamentals": np.array([[fundamentals["PE_Ratio"], fundamentals["EPS"], fundamentals["Revenue"], fundamentals["Market_Cap"]]] * look back)
+      "bert": np.array([bert_embeddings] * look_back),
+      "price": np.array([[latest_price]] * look_back),
+      "company": np.array([sp500_tickers.index(ticker)] * look_back),
+      "entities": np.array([entity_features] * look_back),
+      "sentiment": np.array([[sentiment]] * look_back),
+      "tfidf": np.array([tfidf_matrix] * look_back).reshape(look_back, -1),
+      "topics": np.array([topics_matrix] * look_back).reshape(look_back, -1),
+      "relevance": np.array([[relevance]] * look_back),
+      "fundamentals": np.array([[fundamentals["PE_Ratio"], fundamentals["EPS"], fundamentals["Revenue"], fundamentals["Market_Cap"]]] * look_back)
     }
 
     new_input is [
@@ -429,7 +411,7 @@ for ticker in sp500_tickers:
     predicted_mean is predictions[f'output_mean_{ticker}'].flatten()[0]
 
     # Calculate percentual change
-    percentual_change is (predicted_mean - latest_price) / latest_price * 100
+    percentual_change = (predicted_mean - latest_price) / latest_price * 100
     predicted_changes.append((ticker, percentual_change))
 
 # Sort companies by highest predicted percentual change
@@ -442,7 +424,7 @@ for ticker, change in predicted_changes[:10]:
 
 # Add a searchable list for detailed company information
 st.title("Search for Company Details")
-search_company is st.selectbox("Select a company", sp500_tickers)
+search_company = st.selectbox("Select a company", sp500_tickers)
 
 if search_company:
   st.subheader(f"Details for {search_company}")
@@ -458,7 +440,7 @@ if search_company:
 
 # Visualization
 st.title("Stock Price Prediction Visualization")
-selected_vis_company is st.selectbox("Select a company to visualize", sp500_tickers)
+selected_vis_company = st.selectbox("Select a company to visualize", sp500_tickers)
 
 # Plot actual vs. predicted prices
 def plot_actual_vs_predicted():
@@ -467,9 +449,9 @@ def plot_actual_vs_predicted():
   plt.plot(stock_data.index, stock_data["Close"], label='Actual Price')
   if st.checkbox("Show Predicted Price"):
     plt.plot(stock_data.index, [predicted_mean]*len(stock_data), label='Predicted Price')
-    lower_bound is [predicted_mean - 1.96 * predicted_std] * len(stock data)
-    upper_bound is [predicted_mean + 1.96 * predicted_std] * len(stock data)
-    plt.fill_between(stock data.index, lower_bound, upper bound, color='gray', alpha=0.3, label='95% Confidence Interval')
+    lower_bound = [predicted_mean - 1.96 * predicted_std] * len(stock_data)
+    upper_bound = [predicted_mean + 1.96 * predicted_std] * len(stock_data)
+    plt.fill_between(stock_data.index, lower_bound, upper_bound, color='gray', alpha=0.3, label='95% Confidence Interval')
   plt.title(f'Actual vs Predicted Prices for {selected_vis_company}')
   plt.xlabel('Date')
   plt.ylabel('Price')
@@ -480,7 +462,7 @@ plot_actual_vs_predicted()
 
 # Plot relevance scores
 def plot_relevance_scores():
-  relevance_scores is [is_relevant(extract_entities(preprocess_text(article['title'])), selected_vis_company) for article in news_articles]
+  relevance_scores = [is_relevant(extract_entities(preprocess_text(article['title'])), selected_vis_company) for article in news_articles]
   stock_data is fetch_stock_prices(selected_vis_company, '2023-01-01', pd.Timestamp.today().strftime('%Y-%m-%d'))
   plt.figure(figsize=(12, 6))
   plt.plot(stock_data.index[:len(relevance_scores)], relevance_scores, label='Relevance Score')
@@ -494,7 +476,7 @@ plot_relevance_scores()
 
 # Plot sentiment scores
 def plot_sentiment_scores():
-  sentiment_scores is [get_sentiment(preprocess_text(article['title'])) for article in news_articles]
+  sentiment_scores = [get_sentiment(preprocess_text(article['title'])) for article in news_articles]
   stock_data is fetch_stock_prices(selected_vis_company, '2023-01-01', pd.Timestamp.today().strftime('%Y-%m-%d'))
   plt.figure(figsize=(12, 6))
   plt.plot(stock_data.index[:len(sentiment_scores)], sentiment_scores, label='Sentiment Score')
