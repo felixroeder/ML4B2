@@ -150,6 +150,7 @@ def build_transformer_model():
       out1 = self.layernorm1(inputs + attn_output)
       ffn_output = self.ffn(out1)
       ffn_output = self.dropout2(ffn_output, training=training)
+      print("FFFFFFFFFFFFFFFFF", len(out1), len(ffn_output))
       return self.layernorm2(out1 + ffn_output)
 
   embed_dim = combined_dim  # Embedding size for each token
