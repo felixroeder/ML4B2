@@ -5,7 +5,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 import yfinance as yf
 import requests
-from newsapi import NewsApiClient
 import spacy
 from textblob import TextBlob
 from transformers import BertTokenizer, TFBertModel
