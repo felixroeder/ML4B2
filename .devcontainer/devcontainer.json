@@ -7,8 +7,10 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"changkaiyan.tf2snippets",
-				"vahidk.tensorflow-snippets"
+				"ms-python.python",
+        		"ms-python.vscode-pylance",
+        		"vahidk.tensorflow-snippets",
+        		"changkaiyan.tf2snippets"
 			]
 		}
 	}
