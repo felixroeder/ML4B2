@@ -7,7 +7,8 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"changkaiyan.tf2snippets"
+				"changkaiyan.tf2snippets",
+				"vahidk.tensorflow-snippets"
 			]
 		}
 	}
