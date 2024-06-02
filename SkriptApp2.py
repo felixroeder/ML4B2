@@ -81,6 +81,7 @@ def fetch_stock_prices(ticker, start_date, end_date):
   stock_data = yf.download(ticker, start=start_date, end=end_date)
   return stock_data
 
+
 # Function to fetch fundamental data
 def fetch_fundamental_data(ticker):
   stock = yf.Ticker(ticker)
