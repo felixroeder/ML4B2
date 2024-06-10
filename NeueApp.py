@@ -13,7 +13,7 @@ def preprocess_text(text):
 
 
 model_path = ('retrained_model.keras')
-model = tf.keras.models.load_model(model_path)
+model = tf.keras.models.load_model(model_path, compile=False)
 
 # Initialize NewsAPI client
 newsapi = NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')
