@@ -11,12 +11,13 @@ def preprocess_text(text):
     return inputs
 
 
-
-model_path = ('retrained_model.keras')
-model = tf.keras.models.load_model(model_path, compile=False)
+print("lademod")
+#model_path = ('retrained_model.keras')
+#model = tf.keras.models.load_model(model_path, compile=False)
+print("nachlademod")
 
 # Initialize NewsAPI client
-newsapi = NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')
+api = newsapi.NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')
 
 # Define companies and stock tickers
 companies = {
@@ -37,7 +38,7 @@ def fetch_latest_stock_prices():
 def fetch_latest_news():
     news_data = {}
     for company in companies:
-        articles = newsapi.get_everything(q=company, language='en', sort_by='publishedAt', page_size=5)
+        articles = api.get_everything(q=company, language='en', sort_by='publishedAt', page_size=5)
         news_data[company] = articles['articles']
     return news_data
 
