@@ -17,7 +17,7 @@ def preprocess_text(text):
     return inputs
 
 # Load the trained model
-model = load_model('retrained_model.h5')
+model = load_model('retrained_model.keras')
 
 # Initialize NewsAPI client
 newsapi = NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')
