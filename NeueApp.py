@@ -3,6 +3,7 @@ import yfinance as yf
 import newsapi
 from transformers import BertTokenizer
 import tensorflow as tf
+from NeuesModell import ReshapeLayer
 
 # Function to preprocess text
 def preprocess_text(text):
@@ -12,7 +13,9 @@ def preprocess_text(text):
 
 
 
-model = tf.keras.models.load_model('retrained_model.keras')
+model_path = ('retrained_model.keras')
+custom_objects = {'ReshapeLayer': ReshapeLayer}
+model = tf.keras.models.load_model(model_path, custom_objects=custom_objects)
 
 # Initialize NewsAPI client
 newsapi = NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')
