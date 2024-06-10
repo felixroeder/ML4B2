@@ -10,9 +10,7 @@ def preprocess_text(text):
     inputs = tokenizer(text, return_tensors='tf', padding=True, truncation=True, max_length=512)
     return inputs
 
-print("lademod")
 model = tf.keras.models.load_model('retrained_model.keras', safe_mode=False)
-print("nachlademod")
 
 # Initialize NewsAPI client
 api = newsapi.NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')
