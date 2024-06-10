@@ -1,14 +1,8 @@
 import streamlit as st
 import yfinance as yf
-import pandas as pd
-import numpy as np
-
 import newsapi
-from transformers import BertTokenizer, TFBertModel
+from transformers import BertTokenizer
 import tensorflow as tf
-from tensorflow.keras.models import load_model
-from datetime import datetime, timedelta
-import matplotlib.pyplot as plt
 
 # Function to preprocess text
 def preprocess_text(text):
@@ -16,8 +10,9 @@ def preprocess_text(text):
     inputs = tokenizer(text, return_tensors='tf', padding=True, truncation=True, max_length=512)
     return inputs
 
-# Load the trained model
-model = load_model('retrained_model.keras')
+
+
+model = tf.keras.models.load_model('retrained_model.keras')
 
 # Initialize NewsAPI client
 newsapi = NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')

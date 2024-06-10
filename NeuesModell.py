@@ -226,6 +226,16 @@ class ReshapeLayer(tf.keras.layers.Layer):
 
     def call(self, inputs):
         return tf.reshape(inputs, self.target_shape)
+    
+    def get_config(self):
+        config = super(ReshapeLayer, self).get_config()
+        config.update({'target_shape': self.target_shape})
+        return config
+
+    @classmethod
+    def from_config(cls, config):
+        target_shape = config.pop('target_shape')
+        return cls(target_shape, **config)
 
 # Build Transformer model
 def build_transformer_model():
