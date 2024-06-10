@@ -10,10 +10,8 @@ def preprocess_text(text):
     inputs = tokenizer(text, return_tensors='tf', padding=True, truncation=True, max_length=512)
     return inputs
 
-
 print("lademod")
-#model_path = ('retrained_model.keras')
-#model = tf.keras.models.load_model(model_path, compile=False)
+model = tf.keras.models.load_model('retrained_model.keras')
 print("nachlademod")
 
 # Initialize NewsAPI client
