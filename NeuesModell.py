@@ -19,7 +19,7 @@ import tensorflow as tf
 import nltk
 import matplotlib.pyplot as plt
 import streamlit as st
-from newsapi import NewsApiClient
+import newsapi
 from datetime import datetime, timedelta
 
 # Download NLTK data
@@ -32,7 +32,7 @@ stop_words = set(nltk.corpus.stopwords.words('english'))
 lemmatizer = nltk.stem.WordNetLemmatizer()
 
 # Load dataset
-data = pd.read_csv('first_200_rows_dataset.csv')
+data = pd.read_csv('Datensatz.csv')
 
 # Column names
 date_col = "Date"
@@ -353,7 +353,7 @@ predicted_prices_df = pd.DataFrame({company: test_predictions[f'output_{company}
 print(predicted_prices_df.head())
 
 # Save the retrained model
-model.save('retrained_model.h5')
+model.save('retrained_model.keras')
 
 def plot_loss(history, fold):
     plt.plot(history.history['loss'], label='train_loss')
