@@ -11,7 +11,7 @@ def preprocess_text(text):
     return inputs
 
 print("lademod")
-model = tf.keras.models.load_model('retrained_model.keras')
+model = tf.keras.models.load_model('retrained_model.keras', safe_mode=False)
 print("nachlademod")
 
 # Initialize NewsAPI client
