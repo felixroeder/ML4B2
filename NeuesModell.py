@@ -363,4 +363,4 @@ predicted_prices_df = pd.DataFrame({company: test_predictions[f'output_{company}
 print(predicted_prices_df.head())
 
 # Save the retrained model
-model.save('retrained_model.keras')
+model.save('trained_model.keras')
