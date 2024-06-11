@@ -21,7 +21,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import newsapi
 from datetime import datetime, timedelta
-print("prügel")
+print("test")
 # Download NLTK data
 nltk.download('stopwords')
 nltk.download('wordnet')
