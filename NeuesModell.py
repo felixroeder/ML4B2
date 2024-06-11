@@ -234,8 +234,7 @@ class ReshapeLayer(tf.keras.layers.Layer):
 
     @classmethod
     def from_config(cls, config):
-        target_shape = config.pop('target_shape')
-        return cls(target_shape, **config)
+        return cls(**config)
 
 # Build Transformer model
 def build_transformer_model():
@@ -265,8 +264,8 @@ def build_transformer_model():
 
     # Transformer block
     class TransformerBlock(tf.keras.layers.Layer):
-        def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
-            super(TransformerBlock, self).__init__()
+        def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1, **kwargs):
+            super(TransformerBlock, self).__init__(**kwargs)
             self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
             self.ffn = tf.keras.Sequential([
                 tf.keras.layers.Dense(ff_dim, activation="relu"),
@@ -284,15 +283,27 @@ def build_transformer_model():
             ffn_output = self.ffn(out1)
             ffn_output = self.dropout2(ffn_output, training=training)
             return self.layernorm2(out1 + ffn_output)
+        
+        def get_config(self):
+            config = super(TransformerBlock, self).get_config()
+            config.update({
+                'embed_dim': self.att.key_dim,
+                'num_heads': self.att.num_heads,
+                'ff_dim': self.ffn[0].units,
+                'rate': self.dropout1.rate
+            })
+            return config
+        
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
 
     embed_dim = combined.shape[-1]  # Embedding size for each token
     num_heads = 4  # Number of attention heads
     ff_dim = 1024  # Hidden layer size in feed forward network inside transformer
 
     transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
-
-     # Use a Lambda layer to pass the training argument
-    x = tf.keras.layers.Lambda(lambda inputs: transformer_block(inputs, training=True))(combined)
+    x = transformer_block(combined)
 
     # Regularization
     x = Dropout(0.2)(x)
@@ -321,7 +332,6 @@ def compile_and_train_model(train_idx, val_idx):
     # Build the Transformer model
     model = build_transformer_model()
     model.compile(loss={f'output_{company}': 'mse' for company in companies}, optimizer=Adam())
-
     # Early stopping callback
     early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
@@ -330,7 +340,7 @@ def compile_and_train_model(train_idx, val_idx):
         train_inputs,
         train_targets_split,
         validation_data=(val_inputs, val_targets_split),
-        epochs=50,
+        epochs=1,
         batch_size=32,
         callbacks=[early_stopping]
     )
@@ -364,3 +374,4 @@ print(predicted_prices_df.head())
 
 # Save the retrained model
 model.save('trained_model.keras')
+model.save('trained_model.h5')
