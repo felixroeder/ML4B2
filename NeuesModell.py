@@ -11,10 +11,10 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.model_selection import train_test_split, KFold
 from transformers import BertTokenizer, TFBertModel
-from tensorflow.keras.layers import TextVectorization, Embedding, Dense, Input, Concatenate, LayerNormalization, Dropout, TimeDistributed
-from tensorflow.keras.models import Model, load_model
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
+#from tensorflow.keras.layers import TextVectorization, Embedding, Dense, Input, Concatenate, LayerNormalization, Dropout, TimeDistributed
+#from tensorflow.keras.models import Model, load_model
+#from tensorflow.keras.optimizers import Adam
+#from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
 import nltk
 import matplotlib.pyplot as plt
@@ -240,29 +240,29 @@ class ReshapeLayer(tf.keras.layers.Layer):
 
 # Build Transformer model
 def build_transformer_model():
-    bert_input = Input(shape=(look_back, bert.shape[2]), name='bert_input')
-    price_input = Input(shape=(look_back, 1), name='price_input')
-    company_input = Input(shape=(look_back,), name='company_input')
-    entities_input = Input(shape=(look_back, len(unique_entities)), name='entities_input')
-    sentiment_input = Input(shape=(look_back, 1), name='sentiment_input')
-    tfidf_input = Input(shape=(look_back, tfidf.shape[2]), name='tfidf_input')
-    topics_input = Input(shape=(look_back, n_topics), name='topics_input')
-    relevance_input = Input(shape=(look_back, 1), name='relevance_input')
+    bert_input = tf.keras.layers.Input(shape=(look_back, bert.shape[2]), name='bert_input')
+    price_input = tf.keras.layers.Input(shape=(look_back, 1), name='price_input')
+    company_input = tf.keras.layers.Input(shape=(look_back,), name='company_input')
+    entities_input = tf.keras.layers.Input(shape=(look_back, len(unique_entities)), name='entities_input')
+    sentiment_input = tf.keras.layers.Input(shape=(look_back, 1), name='sentiment_input')
+    tfidf_input = tf.keras.layers.Input(shape=(look_back, tfidf.shape[2]), name='tfidf_input')
+    topics_input = tf.keras.layers.Input(shape=(look_back, n_topics), name='topics_input')
+    relevance_input = tf.keras.layers.Input(shape=(look_back, 1), name='relevance_input')
 
     # Apply dense layers to each input to ensure consistent dimensions
-    bert_dense = TimeDistributed(Dense(128))(bert_input)
-    price_dense = TimeDistributed(Dense(128))(price_input)
-    company_embedding_layer = Embedding(input_dim=len(price_cols) + 1, output_dim=128, name='company_embedding')
+    bert_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(bert_input)
+    price_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(price_input)
+    company_embedding_layer = tf.keras.layers.Embedding(input_dim=len(price_cols) + 1, output_dim=128, name='company_embedding')
     company_dense = company_embedding_layer(company_input)
     company_dense = ReshapeLayer([-1, look_back, 128])(company_dense)
-    entities_dense = TimeDistributed(Dense(128))(entities_input)
-    sentiment_dense = TimeDistributed(Dense(128))(sentiment_input)
-    tfidf_dense = TimeDistributed(Dense(128))(tfidf_input)
-    topics_dense = TimeDistributed(Dense(128))(topics_input)
-    relevance_dense = TimeDistributed(Dense(128))(relevance_input)
+    entities_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(entities_input)
+    sentiment_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(sentiment_input)
+    tfidf_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(tfidf_input)
+    topics_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(topics_input)
+    relevance_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(relevance_input)
 
     # Combine all inputs
-    combined = Concatenate(axis=-1)([bert_dense, price_dense, company_dense, entities_dense, sentiment_dense, tfidf_dense, topics_dense, relevance_dense])
+    combined = tf.keras.layers.Concatenate(axis=-1)([bert_dense, price_dense, company_dense, entities_dense, sentiment_dense, tfidf_dense, topics_dense, relevance_dense])
 
     # Transformer block
     @keras.saving.register_keras_serializable()
@@ -274,8 +274,8 @@ def build_transformer_model():
                 tf.keras.layers.Dense(ff_dim, activation="relu"),
                 tf.keras.layers.Dense(embed_dim),
             ])
-            self.layernorm1 = LayerNormalization(epsilon=1e-6)
-            self.layernorm2 = LayerNormalization(epsilon=1e-6)
+            self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+            self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
             self.dropout1 = tf.keras.layers.Dropout(rate)
             self.dropout2 = tf.keras.layers.Dropout(rate)
 
@@ -312,13 +312,13 @@ def build_transformer_model():
      # Use a Lambda layer to pass the training argument
     x = tf.keras.layers.Lambda(lambda inputs: transformer_block(inputs, training=True))(combined)
     # Regularization
-    x = Dropout(0.2)(x)
+    x = tf.keras.layers.Dropout(0.2)(x)
 
     # Create separate output layers for each company
-    outputs = {f'output_{company}': Dense(1, activation='linear', name=f'output_{company}')(x[:, -1, :]) for company in companies}
+    outputs = {f'output_{company}': tf.keras.layers.Dense(1, activation='linear', name=f'output_{company}')(x[:, -1, :]) for company in companies}
 
     # Create model
-    model = Model(inputs=[bert_input, price_input, company_input, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input], outputs=outputs)
+    model = tf.keras.models.Model(inputs=[bert_input, price_input, company_input, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input], outputs=outputs)
     return model
 
 # Prepare inputs for the model
@@ -337,9 +337,9 @@ def compile_and_train_model(train_idx, val_idx):
 
     # Build the Transformer model
     model = build_transformer_model()
-    model.compile(loss={f'output_{company}': 'mse' for company in companies}, optimizer=Adam())
+    model.compile(loss={f'output_{company}': 'mse' for company in companies}, optimizer=tf.keras.optimizers.Adam())
     # Early stopping callback
-    early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
     # Train the model
     history = model.fit(
