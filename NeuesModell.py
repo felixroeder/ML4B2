@@ -21,6 +21,8 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import newsapi
 from datetime import datetime, timedelta
+import keras
+
 print("test")
 # Download NLTK data
 nltk.download('stopwords')
@@ -263,6 +265,7 @@ def build_transformer_model():
     combined = Concatenate(axis=-1)([bert_dense, price_dense, company_dense, entities_dense, sentiment_dense, tfidf_dense, topics_dense, relevance_dense])
 
     # Transformer block
+    @keras.saving.register_keras_serializable()
     class TransformerBlock(tf.keras.layers.Layer):
         def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1, **kwargs):
             super(TransformerBlock, self).__init__(**kwargs)
@@ -286,25 +289,28 @@ def build_transformer_model():
         
         def get_config(self):
             config = super(TransformerBlock, self).get_config()
-            config.update({
-                'embed_dim': self.att.key_dim,
-                'num_heads': self.att.num_heads,
-                'ff_dim': self.ffn[0].units,
-                'rate': self.dropout1.rate
-            })
             return config
         
-        @classmethod
         def from_config(cls, config):
-            return cls(**config)
+            # Get base configuration from parent class (if applicable)
+            config = super(TransformerBlock, cls).from_config(config)
+
+            # Extract specific configurations from the dictionary
+            embed_dim = config.pop('embed_dim')
+            num_heads = config.pop('num_heads')
+            ff_dim = config.pop('ff_dim')
+            rate = config.pop('rate')  # Assuming you have a rate parameter
+
+            # Rebuild the TransformerBlock instance
+            return cls(embed_dim, num_heads, ff_dim, rate=rate)
 
     embed_dim = combined.shape[-1]  # Embedding size for each token
     num_heads = 4  # Number of attention heads
     ff_dim = 1024  # Hidden layer size in feed forward network inside transformer
 
     transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
-    x = transformer_block(combined)
-
+     # Use a Lambda layer to pass the training argument
+    x = tf.keras.layers.Lambda(lambda inputs: transformer_block(inputs, training=True))(combined)
     # Regularization
     x = Dropout(0.2)(x)
 
@@ -340,8 +346,8 @@ def compile_and_train_model(train_idx, val_idx):
         train_inputs,
         train_targets_split,
         validation_data=(val_inputs, val_targets_split),
-        epochs=1,
-        batch_size=32,
+        epochs=1, #50
+        batch_size=1, #32
         callbacks=[early_stopping]
     )
 

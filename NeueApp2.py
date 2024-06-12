@@ -10,7 +10,7 @@ def preprocess_text(text):
     inputs = tokenizer(text, return_tensors='tf', padding=True, truncation=True, max_length=512)
     return inputs
 print("Hallo1")
-model = tf.keras.models.load_model('trained_model.keras', safe_mode=False, compile=False)
+model = tf.keras.models.load_model('trained_model.h5', safe_mode=False, compile=False)
 print("Hallo2")
 
 # Initialize NewsAPI client
