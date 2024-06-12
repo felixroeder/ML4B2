@@ -11,10 +11,6 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.model_selection import train_test_split, KFold
 from transformers import BertTokenizer, TFBertModel
-#from tensorflow.keras.layers import TextVectorization, Embedding, Dense, Input, Concatenate, LayerNormalization, Dropout, TimeDistributed
-#from tensorflow.keras.models import Model, load_model
-#from tensorflow.keras.optimizers import Adam
-#from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
 import nltk
 import matplotlib.pyplot as plt
