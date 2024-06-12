@@ -285,6 +285,12 @@ def build_transformer_model():
         
         def get_config(self):
             config = super(TransformerBlock, self).get_config()
+            # Add custom parameters to the config dictionary
+            config.update({
+                'embed_dim': self.embed_dim,
+                'num_heads': self.num_heads,
+                'ff_dim': self.ffn.layers[0].units,  # Access first layer units of ffn for ff_dim
+            })
             return config
         
         def from_config(cls, config):
@@ -295,10 +301,9 @@ def build_transformer_model():
             embed_dim = config.pop('embed_dim')
             num_heads = config.pop('num_heads')
             ff_dim = config.pop('ff_dim')
-            rate = config.pop('rate')  # Assuming you have a rate parameter
 
             # Rebuild the TransformerBlock instance
-            return cls(embed_dim, num_heads, ff_dim, rate=rate)
+            return cls(embed_dim, num_heads, ff_dim)
 
     embed_dim = combined.shape[-1]  # Embedding size for each token
     num_heads = 4  # Number of attention heads
