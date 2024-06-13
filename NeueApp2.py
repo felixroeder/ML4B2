@@ -9,9 +9,8 @@ def preprocess_text(text):
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     inputs = tokenizer(text, return_tensors='tf', padding=True, truncation=True, max_length=512)
     return inputs
-print("Hallo1")
+
 model = tf.keras.models.load_model('trained_model.h5', safe_mode=False, compile=False)
-print("Hallo2")
 
 # Initialize NewsAPI client
 api = newsapi.NewsApiClient(api_key='ae91264b58784ff19f181a6691c1efc6')
