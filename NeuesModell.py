@@ -8,10 +8,6 @@ from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.impute import KNNImputer
 from transformers import RobertaTokenizer, TFRobertaModel
-from tensorflow.keras.layers import Embedding, Dense, Input, Concatenate, LayerNormalization, Dropout, BatchNormalization, GlobalAveragePooling1D
-from tensorflow.keras.models import Model
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
 from scikeras.wrappers import KerasRegressor
 import nltk
@@ -271,7 +267,7 @@ targets_df = pd.DataFrame(targets_array, columns=companies_to_focus.keys())
 
 # Define the model
 def build_model(look_back, combined_dim, num_companies, num_heads=8, ff_dim=128, dropout_rate=0.5):
-    combined_input = Input(shape=(look_back, combined_dim), name='combined_input')
+    combined_input = tf.keras.layers.Input(shape=(look_back, combined_dim), name='combined_input')
 
     # Transformer block
     class TransformerBlock(tf.keras.layers.Layer):
@@ -282,8 +278,8 @@ def build_model(look_back, combined_dim, num_companies, num_heads=8, ff_dim=128,
                 tf.keras.layers.Dense(ff_dim, activation="relu"),
                 tf.keras.layers.Dense(embed_dim),
             ])
-            self.layernorm1 = LayerNormalization(epsilon=1e-6)
-            self.layernorm2 = LayerNormalization(epsilon=1e-6)
+            self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+            self.layernorm2 = tf.keras.kayers.LayerNormalization(epsilon=1e-6)
             self.dropout1 = tf.keras.layers.Dropout(rate)
             self.dropout2 = tf.keras.layers.Dropout(rate)
 
@@ -299,22 +295,22 @@ def build_model(look_back, combined_dim, num_companies, num_heads=8, ff_dim=128,
     x = transformer_block(combined_input)
 
     # Global average pooling
-    x = GlobalAveragePooling1D()(x)
+    x = tf.keras.layers.GlobalAveragePooling1D()(x)
 
     # Dense layer with Batch Normalization and Dropout
-    x = Dense(64, activation="relu")(x)
-    x = BatchNormalization()(x)
-    x = Dropout(dropout_rate)(x)
+    x = tf.keras.layers.Dense(64, activation="relu")(x)
+    x = tf.keras.layers.BatchNormalization()(x)
+    x = tf.keras.layers.Dropout(dropout_rate)(x)
 
     # Output layers for each company
-    outputs = {ticker: Dense(1, activation='linear', name=f'output_{ticker}')(x) for ticker in companies_to_focus.keys()}
+    outputs = {ticker: tf.keras.layers.Dense(1, activation='linear', name=f'output_{ticker}')(x) for ticker in companies_to_focus.keys()}
 
     # Create model
-    model = Model(inputs=combined_input, outputs=outputs)
+    model = tf.keras.models.Model(inputs=combined_input, outputs=outputs)
 
     # Compile model with a dictionary of losses
     losses = {ticker: 'mse' for ticker in companies_to_focus.keys()}
-    model.compile(loss=losses, optimizer=Adam())
+    model.compile(loss=losses, optimizer=tf.keras.optimizers.Adam())
 
     return model
 
@@ -352,7 +348,7 @@ final_model = create_keras_model(look_back, combined_dim, len(companies_to_focus
                                  best_params['ff_dim'], best_params['dropout_rate'])
 
 # Early stopping callback
-early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
 # Train the final model
 final_model.fit(X_train, y_train,
