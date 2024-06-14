@@ -14,9 +14,10 @@ import nltk
 from ta import add_all_ta_features
 from textblob import TextBlob
 import re
+from functools import partial
 
 # Load new financial news dataset
-news_data = pd.read_csv('/content/first_200_rows_dataset.csv')  # Replace with your dataset path
+news_data = pd.read_csv('Datensatz.csv')  # Replace with your dataset path
 news_data['Date'] = pd.to_datetime(news_data['Date'])
 news_data.rename(columns={'News Article': 'News_Article', 'Date': 'Date'}, inplace=True)
 
@@ -318,6 +319,11 @@ def build_model(look_back, combined_dim, num_companies, num_heads=8, ff_dim=128,
 def create_keras_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate):
     return build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
 
+# Wrap the model
+combined_dim = combined_features_array.shape[-1]
+model = KerasRegressor(model=create_keras_model, look_back=look_back, combined_dim=combined_dim,
+                       num_companies=len(companies_to_focus), epochs=10, batch_size=32, verbose=1)
+
 # Hyperparameter space
 param_distributions = {
     'num_heads': [4, 8, 12],
@@ -325,10 +331,19 @@ param_distributions = {
     'dropout_rate': [0.2, 0.5, 0.7]
 }
 
-# Wrap the model
-combined_dim = combined_features_array.shape[-1]
-model = KerasRegressor(model=create_keras_model, look_back=look_back, combined_dim=combined_dim,
-                       num_companies=len(companies_to_focus), epochs=10, batch_size=32, verbose=1)
+# Ensure the number of samples is the same
+if combined_features_array.shape[0] != targets_df.shape[0]:
+    min_samples = min(combined_features_array.shape[0], targets_df.shape[0])
+    combined_features_array = combined_features_array[:min_samples]
+    targets_df = targets_df.iloc[:min_samples]
+
+# Use functools.partial to set up the model creation with these parameters
+model = KerasRegressor(
+    build_fn=partial(create_keras_model, look_back=look_back, combined_dim=combined_dim, num_companies=len(companies_to_focus)),
+    epochs=10,
+    batch_size=32,
+    verbose=1
+)
 
 # RandomizedSearchCV
 random_search = RandomizedSearchCV(estimator=model, param_distributions=param_distributions, n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1)
