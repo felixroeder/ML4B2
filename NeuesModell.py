@@ -280,7 +280,7 @@ def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128
                 tf.keras.layers.Dense(embed_dim),
             ])
             self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-            self.layernorm2 = tf.keras.kayers.LayerNormalization(epsilon=1e-6)
+            self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
             self.dropout1 = tf.keras.layers.Dropout(rate)
             self.dropout2 = tf.keras.layers.Dropout(rate)
 
@@ -317,16 +317,22 @@ def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128
 
 # Wrap the model with KerasRegressor for use in scikit-learn
 def create_keras_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
-    return build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
+    model = build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
+    losses = {ticker: 'mse' for ticker in companies_to_focus.keys()}
+    model.compile(optimizer=tf.keras.optimizers.Adam(), loss=losses)
+    return model
 
 # Wrap the model
 combined_dim = combined_features_array.shape[-1]
+model = KerasRegressor(model=create_keras_model, look_back=look_back, combined_dim=combined_dim,
+                       num_companies=len(companies_to_focus), epochs=10, batch_size=32, verbose=1)
+
 
 # Hyperparameter space
 param_distributions = {
-    'num_heads': [4, 8, 12],
-    'ff_dim': [64, 128, 256],
-    'dropout_rate': [0.2, 0.5, 0.7]
+    'model__num_heads': [4, 8, 12],
+    'model__ff_dim': [64, 128, 256],
+    'model__dropout_rate': [0.2, 0.5, 0.7]
 }
 
 # Ensure the number of samples is the same
@@ -336,15 +342,11 @@ if combined_features_array.shape[0] != targets_df.shape[0]:
     targets_df = targets_df.iloc[:min_samples]
 
 # Use functools.partial to set up the model creation with these parameters
-model = KerasRegressor(
-    build_fn=partial(create_keras_model, look_back=look_back, combined_dim=combined_dim, num_companies=len(companies_to_focus)),
-    epochs=10,
-    batch_size=32,
-    verbose=1
-)
+partial_model = partial(create_keras_model, look_back=look_back, combined_dim=combined_dim, num_companies=len(companies_to_focus))
 
 # RandomizedSearchCV
-random_search = RandomizedSearchCV(estimator=model, param_distributions=param_distributions, n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1)
+random_search = RandomizedSearchCV(estimator=KerasRegressor(build_fn=partial_model, epochs=10, batch_size=32, verbose=1),
+                                   param_distributions=param_distributions, n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1, error_score='raise')
 
 # Prepare combined inputs for training
 X_train, X_val, y_train, y_val = train_test_split(combined_features_array, targets_df, test_size=0.2, random_state=42)
