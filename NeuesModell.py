@@ -321,8 +321,6 @@ def create_keras_model(look_back, combined_dim, num_companies, num_heads=12, ff_
 
 # Wrap the model
 combined_dim = combined_features_array.shape[-1]
-model = KerasRegressor(model=create_keras_model, look_back=look_back, combined_dim=combined_dim,
-                       num_companies=len(companies_to_focus), epochs=10, batch_size=32, verbose=1)
 
 # Hyperparameter space
 param_distributions = {
