@@ -1,25 +1,29 @@
-import os
-import re
 import pandas as pd
 import numpy as np
 import spacy
-import requests
 import yfinance as yf
-from textblob import TextBlob
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
-from sklearn.model_selection import train_test_split, KFold
-from transformers import BertTokenizer, TFBertModel
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.impute import KNNImputer
+from transformers import RobertaTokenizer, TFRobertaModel
+from tensorflow.keras.layers import Embedding, Dense, Input, Concatenate, LayerNormalization, Dropout, BatchNormalization, GlobalAveragePooling1D
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
+from scikeras.wrappers import KerasRegressor
 import nltk
-import matplotlib.pyplot as plt
-import streamlit as st
-import newsapi
-from datetime import datetime, timedelta
-import keras
+from ta import add_all_ta_features
+from textblob import TextBlob
+import re
 
-print("test")
+# Load new financial news dataset
+news_data = pd.read_csv('/content/first_200_rows_dataset.csv')  # Replace with your dataset path
+news_data['Date'] = pd.to_datetime(news_data['Date'])
+news_data.rename(columns={'News Article': 'News_Article', 'Date': 'Date'}, inplace=True)
+
 # Download NLTK data
 nltk.download('stopwords')
 nltk.download('wordnet')
@@ -29,18 +33,12 @@ nlp = spacy.load("en_core_web_sm")
 stop_words = set(nltk.corpus.stopwords.words('english'))
 lemmatizer = nltk.stem.WordNetLemmatizer()
 
-# Load dataset
-data = pd.read_csv('Datensatz.csv')
-
-# Column names
-date_col = "Date"
-news_col = "News Article"
-price_cols = ["Apple_Price", "Amazon_Price", "Google_Price"]
-companies = ["Apple", "Amazon", "Google"]
-
-# Convert date column to datetime
-data[date_col] = pd.to_datetime(data[date_col])
-data.sort_values(by=date_col, inplace=True)
+# List of companies to focus on
+companies_to_focus = {
+    'AMZN': 'Amazon',
+    'GOOGL': 'Google',
+    'AAPL': 'Apple'
+}
 
 # Function to preprocess text
 def preprocess_text(text):
@@ -54,224 +52,238 @@ def preprocess_text(text):
     return processed_text
 
 # Preprocess news articles
-data[news_col] = data[news_col].apply(preprocess_text)
+news_data['Processed_Article'] = news_data['News_Article'].apply(preprocess_text)
 
-# Perform NER
-def extract_entities(text):
-    doc = nlp(text)
-    entities = [ent.text for ent in doc.ents if ent.label_ in ["ORG", "GPE"]]
-    return entities
+# Perform Topic Modeling
+tfidf_vectorizer = TfidfVectorizer(max_features=1000, stop_words='english')
+tfidf_matrix = tfidf_vectorizer.fit_transform(news_data['Processed_Article'])
 
-data["Entities"] = data[news_col].apply(extract_entities)
+lda = LatentDirichletAllocation(n_components=10, random_state=42)
+lda_matrix = lda.fit_transform(tfidf_matrix)
 
-# Function to check if a news article is relevant to a company
-def is_relevant(entities, company):
-    return int(company.lower() in (e.lower() for e in entities))
-
-# Create relevance features for each company
-for company in companies:
-    data[f"{company}_Relevant"] = data["Entities"].apply(lambda x: is_relevant(x, company))
+news_data['Topic'] = np.argmax(lda_matrix, axis=1)
 
 # Perform Sentiment Analysis
 def get_sentiment(text):
     return TextBlob(text).sentiment.polarity
 
-data["Sentiment"] = data[news_col].apply(get_sentiment)
+news_data["Sentiment"] = news_data["Processed_Article"].apply(get_sentiment)
 
-# Apply TF-IDF Vectorization
-vectorizer_tfidf = TfidfVectorizer(max_features=5000)
-tfidf_matrix = vectorizer_tfidf.fit_transform(data[news_col]).toarray()
+# Initialize BERT tokenizer and model (You can also use RoBERTa or other advanced models)
+tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+bert_model = TFRobertaModel.from_pretrained('roberta-base')
 
-# Apply Topic Modeling with LDA
-n_topics = 10
-lda = LatentDirichletAllocation(n_components=n_topics, random_state=42)
-topics_matrix = lda.fit_transform(tfidf_matrix)
+def get_bert_embeddings(texts, tokenizer, model):
+    inputs = tokenizer(texts, return_tensors="tf", padding=True, truncation=True, max_length=128)
+    outputs = model(inputs)
+    return outputs.last_hidden_state[:, 0, :].numpy()  # Use the [CLS] token's embedding
 
-# Initialize BERT tokenizer and model
-tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-bert_model = TFBertModel.from_pretrained('bert-base-uncased')
+# Calculate BERT embeddings for all news
+news_data["BERT_Embedding"] = news_data["Processed_Article"].apply(lambda x: get_bert_embeddings([x], tokenizer, bert_model)[0])
 
-# Function to get BERT embeddings
-def get_bert_embeddings(texts):
-    inputs = tokenizer(texts, return_tensors='tf', padding=True, truncation=True, max_length=512)
-    outputs = bert_model(inputs)
-    embeddings = outputs.last_hidden_state[:, 0, :].numpy()  # CLS token
-    return embeddings
+# Function to fetch stock prices and fundamental data for each company
+def fetch_stock_prices(ticker, start_date, end_date):
+    try:
+        stock_data = yf.download(ticker, start=start_date, end=end_date)
+        if stock_data.shape[0] > 14:  # Ensure there are at least 15 rows of data
+            stock_data = add_all_ta_features(stock_data, open="Open", high="High", low="Low", close="Close", volume="Volume")
+            # Handle missing technical indicators
+            imputer = KNNImputer(n_neighbors=5)
+            stock_data.iloc[:, :] = imputer.fit_transform(stock_data)
+        else:
+            print(f"Not enough data for {ticker}")
+            return pd.DataFrame()
 
-# Get BERT embeddings for news articles
-bert_embeddings = get_bert_embeddings(data[news_col].tolist())
+        # Handle missing dates, including weekends and holidays
+        all_dates = pd.date_range(start=start_date, end=end_date, freq='D')
+        stock_data = stock_data.reindex(all_dates).fillna(method='ffill').fillna(method='bfill').reset_index()
+        stock_data.rename(columns={'index': 'Date'}, inplace=True)
 
-# Combine features
-data["TFIDF"] = list(tfidf_matrix)
-data["Topics"] = list(topics_matrix)
-data["BERT_Embeddings"] = list(bert_embeddings)
+        return stock_data
+    except Exception as e:
+        print(f"Error fetching data for {ticker}: {e}")
+        return pd.DataFrame()
 
-data.head()
+def fetch_fundamental_data(ticker):
+    stock = yf.Ticker(ticker)
+    fundamentals = stock.info
+    return {
+        "PE_Ratio": fundamentals.get("trailingPE", np.nan),
+        "EPS": fundamentals.get("trailingEps", np.nan),
+        "Revenue": fundamentals.get("totalRevenue", np.nan),
+        "Market_Cap": fundamentals.get("marketCap", np.nan)
+    }
 
-# Create a set of all unique entity types in the dataset
-unique_entities = set(entity for entities in data["Entities"] for entity in entities)
-entity_to_index = {entity: idx for idx, entity in enumerate(unique_entities)}
-
-def create_entity_features(entities, entity_to_index):
-    feature_vector = np.zeros(len(entity_to_index))
-    for entity in entities:
-        if entity in entity_to_index:
-            feature_vector[entity_to_index[entity]] = 1
-    return feature_vector
-
-data["Entity_Features"] = data["Entities"].apply(lambda x: create_entity_features(x, entity_to_index))
-
-# Encode company names as indices
-company_encoder = LabelEncoder()
-data["Company_Indices"] = company_encoder.fit_transform(data[price_cols].idxmax(axis=1))
+# Correct date format and optionally extend the date range
+from_date = "2021-01-01"
+to_date = "2021-12-31"  # Extended date range
 
 # Define look-back window
 look_back = 5
 
-def create_sequences(features, price_col, company_idx, window_size):
-    sequences = []
-    for i in range(len(features) - window_size):
-        bert_sequence = np.array(features["BERT_Embeddings"].tolist())[i:i+window_size]
-        price_sequence = features[price_col].values[i:i+window_size].reshape(-1, 1)
-        company_sequence = np.array([company_idx] * window_size)
-        entity_sequence = np.array(features["Entity_Features"].tolist())[i:i+window_size]
-        sentiment_sequence = features["Sentiment"].values[i:i+window_size].reshape(-1, 1)
-        tfidf_sequence = np.array(features["TFIDF"].tolist())[i:i+window_size]
-        topics_sequence = np.array(features["Topics"].tolist())[i:i+window_size]
-        relevance_sequence = features[f"{companies[company_idx]}_Relevant"].values[i:i+window_size].reshape(-1, 1)
-        sequence = {
-            "bert": bert_sequence,
-            "price": price_sequence,
-            "company": company_sequence,
-            "entities": entity_sequence,
-            "sentiment": sentiment_sequence,
-            "tfidf": tfidf_sequence,
-            "topics": topics_sequence,
-            "relevance": relevance_sequence
-        }
-        sequences.append(sequence)
-    return sequences
+# Function to prepare data for each company
+def prepare_company_data(ticker, company, from_date, to_date):
+    print(f"Fetching data for {company} ({ticker})")
+    stock_data = fetch_stock_prices(ticker, from_date, to_date)
+    if stock_data.empty:
+        print(f"No stock data found for {company} ({ticker})")
+        return None
+    fundamental_data = fetch_fundamental_data(ticker)
+
+    # Filter news for the company or its ticker symbol
+    company_news = news_data[news_data['News_Article'].str.contains(company, case=False) | news_data['News_Article'].str.contains(ticker, case=False)]
+
+    # Aggregate all news by day
+    all_news_agg = news_data.groupby('Date').agg({
+        'BERT_Embedding': lambda x: np.mean(np.vstack(x), axis=0),
+        'Sentiment': 'mean'
+    }).reset_index()
+
+    # Handle missing dates for all news
+    all_dates = pd.date_range(start=from_date, end=to_date, freq='D')
+    all_news_agg = all_news_agg.set_index('Date').reindex(all_dates).fillna(method='ffill').fillna(method='bfill').reset_index()
+    all_news_agg.rename(columns={'index': 'Date'}, inplace=True)
+
+    # Aggregate company-specific news by day
+    if not company_news.empty:
+        company_news_agg = company_news.groupby('Date').agg({
+            'BERT_Embedding': lambda x: np.mean(np.vstack(x), axis=0),
+            'Sentiment': 'mean'
+        }).reset_index()
+
+        # Handle missing dates for company-specific news
+        company_news_agg = company_news_agg.set_index('Date').reindex(all_dates).fillna(method='ffill').fillna(method='bfill').reset_index()
+        company_news_agg.rename(columns={'index': 'Date'}, inplace=True)
+    else:
+        # Create empty DataFrame with the same structure
+        company_news_agg = pd.DataFrame({
+            'Date': all_dates,
+            'BERT_Embedding': [np.zeros(bert_model.config.hidden_size)] * len(all_dates),
+            'Sentiment': [0.0] * len(all_dates)
+        })
+
+    # Ensure the columns have correct suffixes
+    company_news_agg.rename(columns={'BERT_Embedding': 'BERT_Embedding_company', 'Sentiment': 'Sentiment_company'}, inplace=True)
+    all_news_agg.rename(columns={'BERT_Embedding': 'BERT_Embedding_all', 'Sentiment': 'Sentiment_all'}, inplace=True)
+
+    # Merge stock data with aggregated news data
+    data = pd.merge(stock_data, company_news_agg, on="Date", how="left")
+    data = pd.merge(data, all_news_agg, on="Date", how="left")
+
+    # Add fundamental data (same value for all rows as an example)
+    for key, value in fundamental_data.items():
+        data[key] = value
+
+    data["Company_Name"] = company
+
+    # Add future price column
+    data["Future_Price"] = data["Close"].shift(-1)  # Shift price for prediction
+
+    # Impute missing values in the Future_Price column
+    data["Future_Price"].fillna(method='ffill', inplace=True)  # Forward fill
+    data["Future_Price"].fillna(method='bfill', inplace=True)  # Backward fill
+
+    # Impute missing values in technical indicators and fundamentals
+    technical_indicator_columns = data.filter(like='ta_').columns
+    for column in technical_indicator_columns:
+        data[column].fillna(method='ffill', inplace=True)
+        data[column].fillna(method='bfill', inplace=True)
+
+    fundamental_columns = ["PE_Ratio", "EPS", "Revenue", "Market_Cap"]
+    for column in fundamental_columns:
+        data[column].fillna(method='ffill', inplace=True)
+        data[column].fillna(method='bfill', inplace=True)
+
+    return data
+
+# Prepare data for each company
+all_company_data = {ticker: prepare_company_data(ticker, company, from_date, to_date) for ticker, company in companies_to_focus.items()}
+
+# Check for and remove any None entries
+all_company_data = {ticker: data for ticker, data in all_company_data.items() if data is not None}
+
+if not all_company_data:
+    raise ValueError("No data available for any company in the specified date range.")
 
 # Create sequences for each company
-all_sequences = []
-for company_idx, price_col in enumerate(price_cols):
-    all_sequences += create_sequences(data.copy(), price_col, company_idx, look_back)
+def create_sequences(data, look_back):
+    sequences = []
+    targets = []
+    for i in range(len(data) - look_back):
+        sequence = {
+            "news_embeddings_company": np.stack(data["BERT_Embedding_company"].values[i:i+look_back]),
+            "news_embeddings_all": np.stack(data["BERT_Embedding_all"].values[i:i+look_back]),
+            "price": data["Close"].values[i:i+look_back].reshape(-1, 1),
+            "sentiment_company": data["Sentiment_company"].values[i:i+look_back].reshape(-1, 1),
+            "sentiment_all": data["Sentiment_all"].values[i:i+look_back].reshape(-1, 1),
+            "technical_indicators": data.filter(like='ta_').values[i:i+look_back],
+            "fundamentals": data[["PE_Ratio", "EPS", "Revenue", "Market_Cap"]].values[i:i+look_back]
+        }
+        sequences.append(sequence)
+        targets.append(data["Future_Price"].values[i + look_back])  # Correctly assign the future price as target
+    return sequences, np.array(targets)
 
-# Convert sequences to appropriate format
+company_sequences = {ticker: create_sequences(data, look_back) for ticker, data in all_company_data.items()}
+
+# Ensure consistency of lengths
+min_length = min(len(sequences) for sequences, _ in company_sequences.values())
+company_sequences = {ticker: (sequences[:min_length], targets[:min_length]) for ticker, (sequences, targets) in company_sequences.items()}
+
+# Convert sequences to arrays for model input
 def convert_sequences(sequences):
-    bert = np.array([seq["bert"] for seq in sequences])
+    news_embeddings_company = np.array([seq["news_embeddings_company"] for seq in sequences])
+    news_embeddings_all = np.array([seq["news_embeddings_all"] for seq in sequences])
     price = np.array([seq["price"] for seq in sequences])
-    company = np.array([seq["company"] for seq in sequences])
-    entities = np.array([seq["entities"] for seq in sequences])
-    sentiment = np.array([seq["sentiment"] for seq in sequences])
-    tfidf = np.array([seq["tfidf"] for seq in sequences])
-    topics = np.array([seq["topics"] for seq in sequences])
-    relevance = np.array([seq["relevance"] for seq in sequences])
-    return bert, price, company, entities, sentiment, tfidf, topics, relevance
+    sentiment_company = np.array([seq["sentiment_company"] for seq in sequences])
+    sentiment_all = np.array([seq["sentiment_all"] for seq in sequences])
+    technical_indicators = np.array([seq["technical_indicators"] for seq in sequences])
+    fundamentals = np.array([seq["fundamentals"] for seq in sequences])
+    return news_embeddings_company, news_embeddings_all, price, sentiment_company, sentiment_all, technical_indicators, fundamentals
 
-bert, price, company, entities, sentiment, tfidf, topics, relevance = convert_sequences(all_sequences)
+company_features = {ticker: (convert_sequences(sequences), targets) for ticker, (sequences, targets) in company_sequences.items()}
 
-# Use only the first 199 sequences to match the target arrays
-bert = bert[:199]
-price = price[:199]
-company = company[:199]
-entities = entities[:199]
-sentiment = sentiment[:199]
-tfidf = tfidf[:199]
-topics = topics[:199]
-relevance = relevance[:199]
+# Validate lengths of the features
+for key, (value, targets) in company_features.items():
+    print(f"{key} lengths: {[len(x) for x in value]}, targets length: {len(targets)}")
 
-# Verify shapes of the converted sequences
-print(bert.shape)
-print(price.shape)
-print(company.shape)
-print(entities.shape)
-print(sentiment.shape)
-print(tfidf.shape)
-print(topics.shape)
-print(relevance.shape)
+# Combine all features into a single array for RandomizedSearchCV
+def combine_features(features):
+    combined = np.concatenate([features[0],
+                               features[1],
+                               features[2],
+                               features[3],
+                               features[4],
+                               features[5],
+                               features[6]], axis=-1)
+    return combined
 
-# Adjust target data to include separate outputs for each company
-targets = {f'output_{company}': data[price_col].shift(-1).dropna().values[:len(all_sequences)] for price_col, company in zip(price_cols, companies)}
+combined_features = {ticker: combine_features(features) for ticker, (features, _) in company_features.items()}
+combined_features_array = np.concatenate(list(combined_features.values()), axis=0)
 
-# Ensure the target data aligns with the sequences
-aligned_targets = {}
-for key, value in targets.items():
-    aligned_value = value[:len(bert)]
-    aligned_targets[key] = aligned_value
+# Concatenate all targets into a single array along the correct axis
+targets_array = np.concatenate([targets.reshape(-1, 1) for _, targets in company_features.values()], axis=0)
 
-# Ensure no NaNs in targets
-for key in aligned_targets.keys():
-    aligned_targets[key] = np.nan_to_num(aligned_targets[key])
+# Ensure the shape of targets matches the expected dimensions
+targets_array = targets_array.reshape(-1, len(companies_to_focus))
 
-# Verify shapes of the aligned targets
-for key, value in aligned_targets.items():
-    print(f"{key}: {value.shape}")
+# Convert targets to a DataFrame for multi-output regression
+targets_df = pd.DataFrame(targets_array, columns=companies_to_focus.keys())
 
-# Check for NaNs in Input Data
-for input_data in [bert, price, company, entities, sentiment, tfidf, topics, relevance]:
-    assert not np.isnan(input_data).any(), "Found NaNs in input data"
-
-# Check for NaNs in Targets
-for key, value in aligned_targets.items():
-    assert not np.isnan(value).any(), f"Found NaNs in target data for {key}"
-
-# Required for reshaping 
-class ReshapeLayer(tf.keras.layers.Layer):
-    def __init__(self, target_shape, **kwargs):
-        super(ReshapeLayer, self).__init__(**kwargs)
-        self.target_shape = target_shape
-
-    def call(self, inputs):
-        return tf.reshape(inputs, self.target_shape)
-    
-    def get_config(self):
-        config = super(ReshapeLayer, self).get_config()
-        config.update({'target_shape': self.target_shape})
-        return config
-
-    @classmethod
-    def from_config(cls, config):
-        return cls(**config)
-
-# Build Transformer model
-def build_transformer_model():
-    bert_input = tf.keras.layers.Input(shape=(look_back, bert.shape[2]), name='bert_input')
-    price_input = tf.keras.layers.Input(shape=(look_back, 1), name='price_input')
-    company_input = tf.keras.layers.Input(shape=(look_back,), name='company_input')
-    entities_input = tf.keras.layers.Input(shape=(look_back, len(unique_entities)), name='entities_input')
-    sentiment_input = tf.keras.layers.Input(shape=(look_back, 1), name='sentiment_input')
-    tfidf_input = tf.keras.layers.Input(shape=(look_back, tfidf.shape[2]), name='tfidf_input')
-    topics_input = tf.keras.layers.Input(shape=(look_back, n_topics), name='topics_input')
-    relevance_input = tf.keras.layers.Input(shape=(look_back, 1), name='relevance_input')
-
-    # Apply dense layers to each input to ensure consistent dimensions
-    bert_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(bert_input)
-    price_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(price_input)
-    company_embedding_layer = tf.keras.layers.Embedding(input_dim=len(price_cols) + 1, output_dim=128, name='company_embedding')
-    company_dense = company_embedding_layer(company_input)
-    company_dense = ReshapeLayer([-1, look_back, 128])(company_dense)
-    entities_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(entities_input)
-    sentiment_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(sentiment_input)
-    tfidf_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(tfidf_input)
-    topics_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(topics_input)
-    relevance_dense = tf.keras.layers.TimeDistributed(tf.keras.layers.Dense(128))(relevance_input)
-
-    # Combine all inputs
-    combined = tf.keras.layers.Concatenate(axis=-1)([bert_dense, price_dense, company_dense, entities_dense, sentiment_dense, tfidf_dense, topics_dense, relevance_dense])
+# Define the model
+def build_model(look_back, combined_dim, num_companies, num_heads=8, ff_dim=128, dropout_rate=0.5):
+    combined_input = Input(shape=(look_back, combined_dim), name='combined_input')
 
     # Transformer block
-    @keras.saving.register_keras_serializable()
     class TransformerBlock(tf.keras.layers.Layer):
-        def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1, **kwargs):
-            super(TransformerBlock, self).__init__(**kwargs)
+        def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+            super(TransformerBlock, self).__init__()
             self.att = tf.keras.layers.MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
             self.ffn = tf.keras.Sequential([
                 tf.keras.layers.Dense(ff_dim, activation="relu"),
                 tf.keras.layers.Dense(embed_dim),
             ])
-            self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-            self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+            self.layernorm1 = LayerNormalization(epsilon=1e-6)
+            self.layernorm2 = LayerNormalization(epsilon=1e-6)
             self.dropout1 = tf.keras.layers.Dropout(rate)
             self.dropout2 = tf.keras.layers.Dropout(rate)
 
@@ -282,103 +294,82 @@ def build_transformer_model():
             ffn_output = self.ffn(out1)
             ffn_output = self.dropout2(ffn_output, training=training)
             return self.layernorm2(out1 + ffn_output)
-        
-        def get_config(self):
-            config = super(TransformerBlock, self).get_config()
-            # Add custom parameters to the config dictionary
-            config.update({
-                'embed_dim': self.embed_dim,
-                'num_heads': self.num_heads,
-                'ff_dim': self.ffn.layers[0].units,  # Access first layer units of ffn for ff_dim
-            })
-            return config
-        
-        def from_config(cls, config):
-            # Get base configuration from parent class (if applicable)
-            config = super(TransformerBlock, cls).from_config(config)
 
-            # Extract specific configurations from the dictionary
-            embed_dim = config.pop('embed_dim')
-            num_heads = config.pop('num_heads')
-            ff_dim = config.pop('ff_dim')
+    transformer_block = TransformerBlock(combined_dim, num_heads, ff_dim, rate=dropout_rate)
+    x = transformer_block(combined_input)
 
-            # Rebuild the TransformerBlock instance
-            return cls(embed_dim, num_heads, ff_dim)
+    # Global average pooling
+    x = GlobalAveragePooling1D()(x)
 
-    embed_dim = combined.shape[-1]  # Embedding size for each token
-    num_heads = 4  # Number of attention heads
-    ff_dim = 1024  # Hidden layer size in feed forward network inside transformer
+    # Dense layer with Batch Normalization and Dropout
+    x = Dense(64, activation="relu")(x)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout_rate)(x)
 
-    transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
-     # Use a Lambda layer to pass the training argument
-    x = tf.keras.layers.Lambda(lambda inputs: transformer_block(inputs, training=True))(combined)
-    # Regularization
-    x = tf.keras.layers.Dropout(0.2)(x)
-
-    # Create separate output layers for each company
-    outputs = {f'output_{company}': tf.keras.layers.Dense(1, activation='linear', name=f'output_{company}')(x[:, -1, :]) for company in companies}
+    # Output layers for each company
+    outputs = {ticker: Dense(1, activation='linear', name=f'output_{ticker}')(x) for ticker in companies_to_focus.keys()}
 
     # Create model
-    model = tf.keras.models.Model(inputs=[bert_input, price_input, company_input, entities_input, sentiment_input, tfidf_input, topics_input, relevance_input], outputs=outputs)
+    model = Model(inputs=combined_input, outputs=outputs)
+
+    # Compile model with a dictionary of losses
+    losses = {ticker: 'mse' for ticker in companies_to_focus.keys()}
+    model.compile(loss=losses, optimizer=Adam())
+
     return model
 
-# Prepare inputs for the model
-inputs = [bert, price, company, entities, sentiment, tfidf, topics, relevance]
+# Wrap the model with KerasRegressor for use in scikit-learn
+def create_keras_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate):
+    return build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
 
-# Set up K-Fold cross-validation
-kf = KFold(n_splits=5, shuffle=True, random_state=42)
+# Hyperparameter space
+param_distributions = {
+    'num_heads': [4, 8, 12],
+    'ff_dim': [64, 128, 256],
+    'dropout_rate': [0.2, 0.5, 0.7]
+}
 
-# Function to compile and train the model within each fold
-def compile_and_train_model(train_idx, val_idx):
-    train_inputs = [input_data[train_idx] for input_data in inputs]
-    val_inputs = [input_data[val_idx] for input_data in inputs]
+# Wrap the model
+combined_dim = combined_features_array.shape[-1]
+model = KerasRegressor(model=create_keras_model, look_back=look_back, combined_dim=combined_dim,
+                       num_companies=len(companies_to_focus), epochs=10, batch_size=32, verbose=1)
 
-    train_targets_split = {key: value[train_idx] for key, value in targets.items()}
-    val_targets_split = {key: value[val_idx] for key, value in targets.items()}
+# RandomizedSearchCV
+random_search = RandomizedSearchCV(estimator=model, param_distributions=param_distributions, n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1)
 
-    # Build the Transformer model
-    model = build_transformer_model()
-    model.compile(loss={f'output_{company}': 'mse' for company in companies}, optimizer=tf.keras.optimizers.Adam())
-    # Early stopping callback
-    early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+# Prepare combined inputs for training
+X_train, X_val, y_train, y_val = train_test_split(combined_features_array, targets_df, test_size=0.2, random_state=42)
 
-    # Train the model
-    history = model.fit(
-        train_inputs,
-        train_targets_split,
-        validation_data=(val_inputs, val_targets_split),
-        epochs=1, #50
-        batch_size=1, #32
-        callbacks=[early_stopping]
-    )
+# Fit RandomizedSearchCV
+random_search.fit(X_train, y_train)
 
-    return model, history
+# Get the best parameters
+best_params = random_search.best_params_
+print(f"Best parameters: {best_params}")
 
-# Perform K-Fold cross-validation
-fold_models = []
-histories = []
-for train_idx, val_idx in kf.split(np.arange(len(bert))):
-    model, history = compile_and_train_model(train_idx, val_idx)
-    fold_models.append(model)
-    histories.append(history)
+# Train the final model with the best parameters
+final_model = create_keras_model(look_back, combined_dim, len(companies_to_focus), best_params['num_heads'],
+                                 best_params['ff_dim'], best_params['dropout_rate'])
 
-# Function to make predictions using the average of models from cross-validation
-def predict_with_ensemble(models, inputs):
-    predictions = [model.predict(inputs) for model in models]
-    avg_predictions = {}
-    for company in companies:
-        avg_predictions[f'output_{company}'] = np.mean([pred[f'output_{company}'] for pred in predictions], axis=0)
-    return avg_predictions
+# Early stopping callback
+early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
-# Make predictions on test data with ensemble of models from cross-validation
-test_predictions = predict_with_ensemble(fold_models, inputs)
+# Train the final model
+final_model.fit(X_train, y_train,
+                validation_data=(X_val, y_val),
+                epochs=50,
+                batch_size=32,
+                callbacks=[early_stopping])
+
+# Make predictions on validation data
+predicted_prices = final_model.predict(X_val)
 
 # Convert predictions to a DataFrame for easier handling
-predicted_prices_df = pd.DataFrame({company: test_predictions[f'output_{company}'].flatten() for company in companies})
+predicted_prices_df = pd.DataFrame(predicted_prices, columns=targets_df.columns)
 
 # Display the predicted prices
 print(predicted_prices_df.head())
 
 # Save the retrained model
-model.save('trained_model.keras')
-model.save('trained_model.h5')
+final_model.save('trained_model.keras')
+final_model.save('trained_model.h5')
