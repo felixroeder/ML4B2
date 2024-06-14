@@ -267,7 +267,7 @@ targets_array = targets_array.reshape(-1, len(companies_to_focus))
 targets_df = pd.DataFrame(targets_array, columns=companies_to_focus.keys())
 
 # Define the model
-def build_model(look_back, combined_dim, num_companies, num_heads=8, ff_dim=128, dropout_rate=0.5):
+def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
     combined_input = tf.keras.layers.Input(shape=(look_back, combined_dim), name='combined_input')
 
     # Transformer block
@@ -316,7 +316,7 @@ def build_model(look_back, combined_dim, num_companies, num_heads=8, ff_dim=128,
     return model
 
 # Wrap the model with KerasRegressor for use in scikit-learn
-def create_keras_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate):
+def create_keras_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
     return build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
 
 # Wrap the model
