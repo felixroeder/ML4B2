@@ -268,7 +268,7 @@ targets_df = pd.DataFrame(targets_array, columns=companies_to_focus.keys())
 
 # Define the model
 def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
-    combined_input = tf.keras.layers.Input(shape=(look_back, combined_dim), name='combined_input')
+    combined_input = tf.keras.layers.Input(shape=(None, 1543), name='combined_input')
 
     # Transformer block
     class TransformerBlock(tf.keras.layers.Layer):
@@ -324,7 +324,7 @@ def create_keras_model(look_back, combined_dim, num_companies, num_heads, ff_dim
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss=losses)
     return model
 
-look_back = 10  # Define the look_back as per your data
+look_back = 5  # Define the look_back as per your data
 combined_dim = combined_features_array.shape[-1]  # Combined dimension
 model = create_keras_model(look_back, combined_dim, num_companies, 12, 128, 0.5)
 
@@ -345,11 +345,8 @@ early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5
 # Make predictions on validation data
 predicted_prices = model.predict(X_val)
 
-# Convert predictions to a DataFrame for easier handling
-predicted_prices_df = pd.DataFrame(predicted_prices, columns=targets_df.columns)
-
 # Display the predicted prices
-print(predicted_prices_df.head())
+print(predicted_prices)
 
 # Save the retrained model
 model.save('trained_model.keras')
