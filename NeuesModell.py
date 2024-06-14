@@ -322,36 +322,31 @@ def create_keras_model(look_back, combined_dim, num_companies, num_heads=12, ff_
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss=losses)
     return model
 
-# Wrap the model
-combined_dim = combined_features_array.shape[-1]
-model = KerasRegressor(model=create_keras_model, look_back=look_back, combined_dim=combined_dim,
-                       num_companies=len(companies_to_focus), epochs=10, batch_size=32, verbose=1)
+look_back = 10  # Define the look_back as per your data
+combined_dim = combined_features_array.shape[-1]  # Combined dimension
+num_companies = len(companies_to_focus)  # Number of companies
 
+# Use functools.partial to fix arguments
+partial_model = partial(create_keras_model, look_back=look_back, combined_dim=combined_dim)
 
-# Hyperparameter space
+# Initialize KerasRegressor
+keras_regressor = KerasRegressor(model=partial_model, epochs=10, batch_size=32, verbose=1)
+
+# Define hyperparameter space
 param_distributions = {
-    'model__num_heads': [4, 8, 12],
-    'model__ff_dim': [64, 128, 256],
-    'model__dropout_rate': [0.2, 0.5, 0.7]
+    'num_heads': [4, 8, 12],
+    'ff_dim': [64, 128, 256],
+    'dropout_rate': [0.2, 0.5, 0.7]
 }
 
-# Ensure the number of samples is the same
-if combined_features_array.shape[0] != targets_df.shape[0]:
-    min_samples = min(combined_features_array.shape[0], targets_df.shape[0])
-    combined_features_array = combined_features_array[:min_samples]
-    targets_df = targets_df.iloc[:min_samples]
+# Prepare your data
+from sklearn.model_selection import train_test_split
+X_train, X_val, y_train, y_val = train_test_split(combined_features_array, targets_df.values, test_size=0.2, random_state=42)
 
-# Use functools.partial to set up the model creation with these parameters
-partial_model = partial(create_keras_model, look_back=look_back, combined_dim=combined_dim, num_companies=len(companies_to_focus))
+# Perform RandomizedSearchCV
+random_search = RandomizedSearchCV(estimator=keras_regressor, param_distributions=param_distributions, 
+                                   n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1, error_score='raise')
 
-# RandomizedSearchCV
-random_search = RandomizedSearchCV(estimator=KerasRegressor(build_fn=partial_model, epochs=10, batch_size=32, verbose=1),
-                                   param_distributions=param_distributions, n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1, error_score='raise')
-
-# Prepare combined inputs for training
-X_train, X_val, y_train, y_val = train_test_split(combined_features_array, targets_df, test_size=0.2, random_state=42)
-
-# Fit RandomizedSearchCV
 random_search.fit(X_train, y_train)
 
 # Get the best parameters
@@ -359,18 +354,17 @@ best_params = random_search.best_params_
 print(f"Best parameters: {best_params}")
 
 # Train the final model with the best parameters
-final_model = create_keras_model(look_back, combined_dim, len(companies_to_focus), best_params['num_heads'],
-                                 best_params['ff_dim'], best_params['dropout_rate'])
+final_model = create_keras_model(look_back, combined_dim, 
+                                 num_heads=best_params['num_heads'], 
+                                 ff_dim=best_params['ff_dim'], 
+                                 dropout_rate=best_params['dropout_rate'])
 
 # Early stopping callback
 early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
 # Train the final model
-final_model.fit(X_train, y_train,
-                validation_data=(X_val, y_val),
-                epochs=50,
-                batch_size=32,
-                callbacks=[early_stopping])
+final_model.fit(X_train, y_train, validation_data=(X_val, y_val), 
+                epochs=50, batch_size=32, callbacks=[early_stopping])
 
 # Make predictions on validation data
 predicted_prices = final_model.predict(X_val)
