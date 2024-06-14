@@ -318,7 +318,7 @@ def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128
 num_companies = len(companies_to_focus)  # Number of companies
 
 # Wrap the model with KerasRegressor for use in scikit-learn
-def create_keras_model(look_back, combined_dim, num_companies=num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
+def create_keras_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate):
     model = build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
     losses = {ticker: 'mse' for ticker in companies_to_focus.keys()}
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss=losses)
@@ -326,19 +326,7 @@ def create_keras_model(look_back, combined_dim, num_companies=num_companies, num
 
 look_back = 10  # Define the look_back as per your data
 combined_dim = combined_features_array.shape[-1]  # Combined dimension
-
-# Use functools.partial to fix arguments
-partial_model = partial(create_keras_model, look_back=look_back, combined_dim=combined_dim)
-
-# Initialize KerasRegressor
-keras_regressor = KerasRegressor(model=partial_model, epochs=10, batch_size=32, verbose=1, num_heads=12, ff_dim=256, dropout_rate=0.7)
-
-# Define hyperparameter space
-param_distributions = {
-    'num_heads': [4, 8, 12],
-    'ff_dim': [64, 128, 256],
-    'dropout_rate': [0.2, 0.5, 0.7]
-}
+model = create_keras_model(look_back, combined_dim, num_companies, 12, 128, 0.5)
 
 # Ensure the number of samples is the same
 if combined_features_array.shape[0] != targets_df.shape[0]:
@@ -349,31 +337,13 @@ if combined_features_array.shape[0] != targets_df.shape[0]:
 # Prepare your data
 X_train, X_val, y_train, y_val = train_test_split(combined_features_array, targets_df.values, test_size=0.2, random_state=42)
 
-# Perform RandomizedSearchCV
-random_search = RandomizedSearchCV(estimator=keras_regressor, param_distributions=param_distributions, 
-                                   n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1, error_score='raise')
-
-random_search.fit(X_train, y_train)
-
-# Get the best parameters
-best_params = random_search.best_params_
-print(f"Best parameters: {best_params}")
-
-# Train the final model with the best parameters
-final_model = create_keras_model(look_back, combined_dim, 
-                                 num_heads=best_params['num_heads'], 
-                                 ff_dim=best_params['ff_dim'], 
-                                 dropout_rate=best_params['dropout_rate'])
+model.fit(X_train, y_train)
 
 # Early stopping callback
 early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
-# Train the final model
-final_model.fit(X_train, y_train, validation_data=(X_val, y_val), 
-                epochs=50, batch_size=32, callbacks=[early_stopping])
-
 # Make predictions on validation data
-predicted_prices = final_model.predict(X_val)
+predicted_prices = model.predict(X_val)
 
 # Convert predictions to a DataFrame for easier handling
 predicted_prices_df = pd.DataFrame(predicted_prices, columns=targets_df.columns)
@@ -382,5 +352,5 @@ predicted_prices_df = pd.DataFrame(predicted_prices, columns=targets_df.columns)
 print(predicted_prices_df.head())
 
 # Save the retrained model
-final_model.save('trained_model.keras')
-final_model.save('trained_model.h5')
+model.save('trained_model.keras')
+model.save('trained_model.h5')
