@@ -5,21 +5,18 @@ import yfinance as yf
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import LatentDirichletAllocation
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
+from sklearn.model_selection import train_test_split
 from sklearn.impute import KNNImputer
 from transformers import RobertaTokenizer, TFRobertaModel
+from tensorflow.keras.layers import Embedding, Dense, Input, Concatenate, LayerNormalization, Dropout, BatchNormalization, GlobalAveragePooling1D
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping
 import tensorflow as tf
-from scikeras.wrappers import KerasRegressor
 import nltk
 from ta import add_all_ta_features
 from textblob import TextBlob
 import re
-from functools import partial
-
-# Load new financial news dataset
-news_data = pd.read_csv('Datensatz.csv')  # Replace with your dataset path
-news_data['Date'] = pd.to_datetime(news_data['Date'])
-news_data.rename(columns={'News Article': 'News_Article', 'Date': 'Date'}, inplace=True)
 
 # Download NLTK data
 nltk.download('stopwords')
@@ -29,6 +26,11 @@ nltk.download('wordnet')
 nlp = spacy.load("en_core_web_sm")
 stop_words = set(nltk.corpus.stopwords.words('english'))
 lemmatizer = nltk.stem.WordNetLemmatizer()
+
+# Load new financial news dataset
+news_data = pd.read_csv('new_financial_news_dataset.csv')  # Replace with your dataset path
+news_data['created'] = pd.to_datetime(news_data['created'])
+news_data.rename(columns={'title': 'News_Article', 'created': 'Date'}, inplace=True)
 
 # List of companies to focus on
 companies_to_focus = {
@@ -159,13 +161,9 @@ def prepare_company_data(ticker, company, from_date, to_date):
             'Sentiment': [0.0] * len(all_dates)
         })
 
-    # Ensure the columns have correct suffixes
-    company_news_agg.rename(columns={'BERT_Embedding': 'BERT_Embedding_company', 'Sentiment': 'Sentiment_company'}, inplace=True)
-    all_news_agg.rename(columns={'BERT_Embedding': 'BERT_Embedding_all', 'Sentiment': 'Sentiment_all'}, inplace=True)
-
     # Merge stock data with aggregated news data
-    data = pd.merge(stock_data, company_news_agg, on="Date", how="left")
-    data = pd.merge(data, all_news_agg, on="Date", how="left")
+    data = pd.merge(stock_data, company_news_agg, on="Date", how="left", suffixes=('', '_company'))
+    data = pd.merge(data, all_news_agg, on="Date", how="left", suffixes=('', '_all'))
 
     # Add fundamental data (same value for all rows as an example)
     for key, value in fundamental_data.items():
@@ -205,7 +203,6 @@ if not all_company_data:
 # Create sequences for each company
 def create_sequences(data, look_back):
     sequences = []
-    targets = []
     for i in range(len(data) - look_back):
         sequence = {
             "news_embeddings_company": np.stack(data["BERT_Embedding_company"].values[i:i+look_back]),
@@ -213,18 +210,17 @@ def create_sequences(data, look_back):
             "price": data["Close"].values[i:i+look_back].reshape(-1, 1),
             "sentiment_company": data["Sentiment_company"].values[i:i+look_back].reshape(-1, 1),
             "sentiment_all": data["Sentiment_all"].values[i:i+look_back].reshape(-1, 1),
-            "technical_indicators": data.filter(like='ta_').values[i:i+look_back],
+            "technical_indicators": data.filter(like='volume_').values[i:i+look_back],
             "fundamentals": data[["PE_Ratio", "EPS", "Revenue", "Market_Cap"]].values[i:i+look_back]
         }
         sequences.append(sequence)
-        targets.append(data["Future_Price"].values[i + look_back])  # Correctly assign the future price as target
-    return sequences, np.array(targets)
+    return sequences
 
 company_sequences = {ticker: create_sequences(data, look_back) for ticker, data in all_company_data.items()}
 
 # Ensure consistency of lengths
-min_length = min(len(sequences) for sequences, _ in company_sequences.values())
-company_sequences = {ticker: (sequences[:min_length], targets[:min_length]) for ticker, (sequences, targets) in company_sequences.items()}
+min_length = min(len(sequences) for sequences in company_sequences.values())
+company_sequences = {ticker: sequences[:min_length] for ticker, sequences in company_sequences.items()}
 
 # Convert sequences to arrays for model input
 def convert_sequences(sequences):
@@ -237,40 +233,35 @@ def convert_sequences(sequences):
     fundamentals = np.array([seq["fundamentals"] for seq in sequences])
     return news_embeddings_company, news_embeddings_all, price, sentiment_company, sentiment_all, technical_indicators, fundamentals
 
-company_features = {ticker: (convert_sequences(sequences), targets) for ticker, (sequences, targets) in company_sequences.items()}
+company_features = {ticker: convert_sequences(sequences) for ticker, sequences in company_sequences.items()}
 
 # Validate lengths of the features
-for key, (value, targets) in company_features.items():
-    print(f"{key} lengths: {[len(x) for x in value]}, targets length: {len(targets)}")
-
-# Combine all features into a single array for RandomizedSearchCV
-def combine_features(features):
-    combined = np.concatenate([features[0],
-                               features[1],
-                               features[2],
-                               features[3],
-                               features[4],
-                               features[5],
-                               features[6]], axis=-1)
-    return combined
-
-combined_features = {ticker: combine_features(features) for ticker, (features, _) in company_features.items()}
-combined_features_array = np.concatenate(list(combined_features.values()), axis=0)
-
-# Concatenate all targets into a single array along the correct axis
-targets_array = np.concatenate([targets.reshape(-1, 1) for _, targets in company_features.values()], axis=0)
-
-# Ensure the shape of targets matches the expected dimensions
-targets_array = targets_array.reshape(-1, len(companies_to_focus))
-
-# Convert targets to a DataFrame for multi-output regression
-targets_df = pd.DataFrame(targets_array, columns=companies_to_focus.keys())
+for key, value in company_features.items():
+    print(f"{key} lengths: {[len(x) for x in value]}")
 
 # Define the model
-def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
-    combined_input = tf.keras.layers.Input(shape=(look_back, combined_dim), name='combined_input')
+def build_model(look_back, news_embedding_dim, technical_indicator_dim, fundamental_dim, num_companies, num_heads=8, ff_dim=128, dropout_rate=0.5):
+    news_input_company = Input(shape=(look_back, news_embedding_dim), name='news_input_company')
+    news_input_all = Input(shape=(look_back, news_embedding_dim), name='news_input_all')
+    price_input = Input(shape=(look_back, 1), name='price_input')
+    sentiment_input_company = Input(shape=(look_back, 1), name='sentiment_input_company')
+    sentiment_input_all = Input(shape=(look_back, 1), name='sentiment_input_all')
+    technical_input = Input(shape=(look_back, technical_indicator_dim), name='technical_input')
+    fundamentals_input = Input(shape=(look_back, fundamental_dim), name='fundamentals_input')
+
+    # Combine all inputs
+    combined = Concatenate(axis=-1)([
+        news_input_company,
+        news_input_all,
+        price_input,
+        sentiment_input_company,
+        sentiment_input_all,
+        technical_input,
+        fundamentals_input
+    ])
 
     # Transformer block
+    embed_dim = combined.shape[-1]  # Dynamic embedding size
     class TransformerBlock(tf.keras.layers.Layer):
         def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
             super(TransformerBlock, self).__init__()
@@ -279,12 +270,12 @@ def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128
                 tf.keras.layers.Dense(ff_dim, activation="relu"),
                 tf.keras.layers.Dense(embed_dim),
             ])
-            self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
-            self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+            self.layernorm1 = LayerNormalization(epsilon=1e-6)
+            self.layernorm2 = LayerNormalization(epsilon=1e-6)
             self.dropout1 = tf.keras.layers.Dropout(rate)
             self.dropout2 = tf.keras.layers.Dropout(rate)
 
-        def call(self, inputs, training):
+        def call(self, inputs, training=None):
             attn_output = self.att(inputs, inputs)
             attn_output = self.dropout1(attn_output, training=training)
             out1 = self.layernorm1(inputs + attn_output)
@@ -292,95 +283,99 @@ def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128
             ffn_output = self.dropout2(ffn_output, training=training)
             return self.layernorm2(out1 + ffn_output)
 
-    transformer_block = TransformerBlock(combined_dim, num_heads, ff_dim, rate=dropout_rate)
-    x = transformer_block(combined_input)
+    transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim, rate=dropout_rate)
+    x = transformer_block(combined)
 
     # Global average pooling
-    x = tf.keras.layers.GlobalAveragePooling1D()(x)
+    x = GlobalAveragePooling1D()(x)
 
     # Dense layer with Batch Normalization and Dropout
-    x = tf.keras.layers.Dense(64, activation="relu")(x)
-    x = tf.keras.layers.BatchNormalization()(x)
-    x = tf.keras.layers.Dropout(dropout_rate)(x)
+    x = Dense(64, activation="relu")(x)
+    x = BatchNormalization()(x)
+    x = Dropout(dropout_rate)(x)
 
     # Output layers for each company
-    outputs = {ticker: tf.keras.layers.Dense(1, activation='linear', name=f'output_{ticker}')(x) for ticker in companies_to_focus.keys()}
+    outputs = {ticker: Dense(1, activation='linear', name=f'output_{ticker}')(x) for ticker in companies_to_focus.keys()}
 
     # Create model
-    model = tf.keras.models.Model(inputs=combined_input, outputs=outputs)
+    model = Model(inputs=[
+        news_input_company,
+        news_input_all,
+        price_input,
+        sentiment_input_company,
+        sentiment_input_all,
+        technical_input,
+        fundamentals_input
+    ], outputs=outputs)
 
     # Compile model with a dictionary of losses
     losses = {ticker: 'mse' for ticker in companies_to_focus.keys()}
-    model.compile(loss=losses, optimizer=tf.keras.optimizers.Adam())
+    model.compile(loss=losses, optimizer=Adam())
 
     return model
 
-num_companies = len(companies_to_focus)  # Number of companies
+# Hyperparameters
+num_heads = 8
+ff_dim = 128
+dropout_rate = 0.5
 
-# Wrap the model with KerasRegressor for use in scikit-learn
-def create_keras_model(look_back, combined_dim, num_companies=num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
-    model = build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
-    losses = {ticker: 'mse' for ticker in companies_to_focus.keys()}
-    model.compile(optimizer=tf.keras.optimizers.Adam(), loss=losses)
-    return model
-
-look_back = 10  # Define the look_back as per your data
-combined_dim = combined_features_array.shape[-1]  # Combined dimension
-
-# Use functools.partial to fix arguments
-partial_model = partial(create_keras_model, look_back=look_back, combined_dim=combined_dim)
-
-# Initialize KerasRegressor
-keras_regressor = KerasRegressor(model=partial_model, epochs=10, batch_size=32, verbose=1, num_heads=12, ff_dim=256, dropout_rate=0.7)
-
-# Define hyperparameter space
-param_distributions = {
-    'num_heads': [4, 8, 12],
-    'ff_dim': [64, 128, 256],
-    'dropout_rate': [0.2, 0.5, 0.7]
-}
-
-# Ensure the number of samples is the same
-if combined_features_array.shape[0] != targets_df.shape[0]:
-    min_samples = min(combined_features_array.shape[0], targets_df.shape[0])
-    combined_features_array = combined_features_array[:min_samples]
-    targets_df = targets_df.iloc[:min_samples]
-
-# Prepare your data
-X_train, X_val, y_train, y_val = train_test_split(combined_features_array, targets_df.values, test_size=0.2, random_state=42)
-
-# Perform RandomizedSearchCV
-random_search = RandomizedSearchCV(estimator=keras_regressor, param_distributions=param_distributions, 
-                                   n_iter=10, scoring='neg_mean_squared_error', cv=3, verbose=1, error_score='raise')
-
-random_search.fit(X_train, y_train)
-
-# Get the best parameters
-best_params = random_search.best_params_
-print(f"Best parameters: {best_params}")
-
-# Train the final model with the best parameters
-final_model = create_keras_model(look_back, combined_dim, 
-                                 num_heads=best_params['num_heads'], 
-                                 ff_dim=best_params['ff_dim'], 
-                                 dropout_rate=best_params['dropout_rate'])
+# Build the model
+final_model = build_model(
+    look_back,
+    train_news_embeddings_company.shape[2],
+    train_technical_indicators.shape[2],
+    train_fundamentals.shape[2],
+    len(companies_to_focus),
+    num_heads,
+    ff_dim,
+    dropout_rate
+)
 
 # Early stopping callback
-early_stopping = tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
 
 # Train the final model
-final_model.fit(X_train, y_train, validation_data=(X_val, y_val), 
-                epochs=50, batch_size=32, callbacks=[early_stopping])
+final_model.fit(
+    [
+        train_news_embeddings_company,
+        train_news_embeddings_all,
+        train_price,
+        train_sentiment_company,
+        train_sentiment_all,
+        train_technical_indicators,
+        train_fundamentals
+    ],
+    train_targets,
+    validation_data=(
+        [
+            val_news_embeddings_company,
+            val_news_embeddings_all,
+            val_price,
+            val_sentiment_company,
+            val_sentiment_all,
+            val_technical_indicators,
+            val_fundamentals
+        ],
+        val_targets
+    ),
+    epochs=50,
+    batch_size=32,
+    callbacks=[early_stopping]
+)
 
-# Make predictions on validation data
-predicted_prices = final_model.predict(X_val)
+# Make predictions on test data
+predicted_prices = final_model.predict([
+    test_news_embeddings_company,
+    test_news_embeddings_all,
+    test_price,
+    test_sentiment_company,
+    test_sentiment_all,
+    test_technical_indicators,
+    test_fundamentals
+])
 
 # Convert predictions to a DataFrame for easier handling
-predicted_prices_df = pd.DataFrame(predicted_prices, columns=targets_df.columns)
+predicted_prices_df = pd.DataFrame({ticker: predicted_prices[ticker].flatten() for ticker in companies_to_focus.keys()})
 
 # Display the predicted prices
 print(predicted_prices_df.head())
-
-# Save the retrained model
-final_model.save('trained_model.keras')
-final_model.save('trained_model.h5')
