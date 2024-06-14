@@ -315,8 +315,10 @@ def build_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128
 
     return model
 
+num_companies = len(companies_to_focus)  # Number of companies
+
 # Wrap the model with KerasRegressor for use in scikit-learn
-def create_keras_model(look_back, combined_dim, num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
+def create_keras_model(look_back, combined_dim, num_companies=num_companies, num_heads=12, ff_dim=128, dropout_rate=0.5):
     model = build_model(look_back, combined_dim, num_companies, num_heads, ff_dim, dropout_rate)
     losses = {ticker: 'mse' for ticker in companies_to_focus.keys()}
     model.compile(optimizer=tf.keras.optimizers.Adam(), loss=losses)
@@ -324,13 +326,12 @@ def create_keras_model(look_back, combined_dim, num_companies, num_heads=12, ff_
 
 look_back = 10  # Define the look_back as per your data
 combined_dim = combined_features_array.shape[-1]  # Combined dimension
-num_companies = len(companies_to_focus)  # Number of companies
 
 # Use functools.partial to fix arguments
 partial_model = partial(create_keras_model, look_back=look_back, combined_dim=combined_dim)
 
 # Initialize KerasRegressor
-keras_regressor = KerasRegressor(model=partial_model, epochs=10, batch_size=32, verbose=1)
+keras_regressor = KerasRegressor(model=partial_model, epochs=10, batch_size=32, verbose=1, num_heads=12, ff_dim=256, dropout_rate=0.7)
 
 # Define hyperparameter space
 param_distributions = {
@@ -339,8 +340,13 @@ param_distributions = {
     'dropout_rate': [0.2, 0.5, 0.7]
 }
 
+# Ensure the number of samples is the same
+if combined_features_array.shape[0] != targets_df.shape[0]:
+    min_samples = min(combined_features_array.shape[0], targets_df.shape[0])
+    combined_features_array = combined_features_array[:min_samples]
+    targets_df = targets_df.iloc[:min_samples]
+
 # Prepare your data
-from sklearn.model_selection import train_test_split
 X_train, X_val, y_train, y_val = train_test_split(combined_features_array, targets_df.values, test_size=0.2, random_state=42)
 
 # Perform RandomizedSearchCV
