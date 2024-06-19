@@ -48,7 +48,7 @@ class TransformerBlock(tf.keras.layers.Layer):
 
 # Load the trained model with the custom layer
 custom_objects = {'TransformerBlock': TransformerBlock}
-model = tf.keras.models.load_model('trained_model.h5', custom_objects=custom_objects)
+model = tf.keras.models.load_model('C:/Users/Felix/OneDrive/10_FAU/Semester 6/Machine Learning for Business/model.keras', custom_objects=custom_objects)
 
 # Function to preprocess text for BERT embeddings
 def preprocess_text(text):
@@ -63,31 +63,39 @@ def get_bert_embeddings(texts, tokenizer, model):
     outputs = model(inputs)
     return outputs.last_hidden_state[:, 0, :].numpy()  # Use the [CLS] token's embedding
 
+# Define dimensions
+bert_dim = bert_model.config.hidden_size  # typically 768 for BERT models
+combined_dim = 6  # Update this to match the model's expected input dimension
+
 # Function to predict future prices
 def predict_prices(news_headlines, look_back_window, bert_dim, combined_dim):
     processed_articles = [preprocess_text(article) for article in news_headlines]
     bert_embeddings = [get_bert_embeddings([article], tokenizer, bert_model)[0] for article in processed_articles]
 
-    # Ensure the embeddings have the correct shape
+    # Ensure the embeddings have the correct shape and dimension
     bert_embeddings = bert_embeddings[-look_back_window:]
     if len(bert_embeddings) < look_back_window:
         # Pad the embeddings if there are not enough look-back days
         padding = [np.zeros((bert_dim,)) for _ in range(look_back_window - len(bert_embeddings))]
         bert_embeddings = padding + bert_embeddings
 
-    if combined_dim > bert_dim:
-        # Combine with dummy data to match the expected combined dimension
-        dummy_data = np.zeros((look_back_window, combined_dim - bert_dim))
-        combined_features = np.concatenate([bert_embeddings, dummy_data], axis=-1)
-    else:
-        combined_features = np.array(bert_embeddings)
+    # Convert to numpy array
+    bert_embeddings = np.array(bert_embeddings)
 
-    # Reshape for model input
-    combined_features = np.array(combined_features).reshape(1, look_back_window, -1)
+    # Create combined_features with shape (look_back_window, combined_dim)
+    combined_features = np.zeros((look_back_window, combined_dim))
+
+    # Fill combined_features with truncated or extended bert_embeddings
+    for i in range(look_back_window):
+        combined_features[i, :min(combined_dim, bert_dim)] = bert_embeddings[i, :combined_dim]
+
+    # Ensure the embeddings have the correct shape
+    combined_features = combined_features.reshape(1, look_back_window, combined_dim)
 
     # Predict using the loaded model
     predictions = model.predict(combined_features)
     return predictions
+
 
 # Function to perform sentiment analysis
 def get_sentiment(text):
@@ -105,7 +113,7 @@ def fetch_fundamental_data(ticker):
     }
 
 # Load the dataset
-news_data = pd.read_csv('modified_first_200_rows_dataset.csv')
+news_data = pd.read_csv('C:/Users/Felix/OneDrive/10_FAU/Semester 6/Machine Learning for Business/Datensatz.csv')
 news_data['Date'] = pd.to_datetime(news_data['Date'])
 news_data['Processed_Article'] = news_data['News Article'].apply(preprocess_text)
 news_data['Sentiment'] = news_data['Processed_Article'].apply(get_sentiment)
@@ -123,7 +131,7 @@ todays_news = news_data[news_data['Date'] == today]
 
 # Define dimensions
 bert_dim = bert_model.config.hidden_size  # typically 768 for BERT models
-combined_dim = 1543  # Update this to the correct combined dimension
+#combined_dim = 1543  # Update this to the correct combined dimension
 
 # Get stock data and predictions
 stock_data_dict = {}
@@ -141,15 +149,44 @@ for ticker in companies_to_focus:
 # Call predict_prices once
 news_headlines = todays_news['Processed_Article'].tolist()
 predictions = predict_prices(news_headlines, look_back, bert_dim, combined_dim)
-predictions_dict = {ticker: predictions[ticker] for ticker in companies_to_focus}
+
+# Initialize predictions_dict
+predictions_dict = {}
+
+# Ensure predictions is reshaped or processed correctly based on model output
+predictions = np.squeeze(predictions)  # Flatten predictions if necessary
+
+# Populate predictions_dict with the single prediction for each ticker
+for ticker in companies_to_focus:
+    predictions_dict[ticker] = predictions  # Store the single prediction value
 
 # Display predicted prices
 st.subheader("Predicted Prices for Tomorrow")
 for ticker, company in companies_to_focus.items():
     today_price = stock_data_dict[ticker]['Close'].values[-1]
-    predicted_price = predictions_dict[ticker][0][0]  # Correct indexing to match prediction structure
-    arrow = "⬆️" if predicted_price > today_price else "⬇️"
-    color = "green" if predicted_price > today_price else "red"
+    
+    # Fetch the prediction for the specific ticker
+    predicted_price = predictions_dict[ticker]
+    
+    # Handle single value or array of predictions
+    if isinstance(predicted_price, np.ndarray):
+        if predicted_price.size == 1:
+            predicted_price = predicted_price.item()  # Convert single-element numpy array to scalar
+        else:
+            predicted_price = predicted_price[0]  # Take the first element if it's an array
+        
+    # Determine arrow and color based on comparison
+    if isinstance(predicted_price, (int, float)):
+        if predicted_price > today_price:
+            arrow = "⬆️"
+            color = "green"
+        else:
+            arrow = "⬇️"
+            color = "red"
+    else:
+        arrow = "↔️"
+        color = "gray"
+    
     st.markdown(f"**{company} ({ticker}):** {predicted_price:.2f} {arrow}", unsafe_allow_html=True)
 
 # Display news headlines with sentiment in a table
@@ -185,7 +222,7 @@ for ticker, company in companies_to_focus.items():
     fig.add_trace(go.Scatter(x=stock_data.index, y=stock_data['Close'], mode='lines', name='Actual Close'))
 
     # Add predicted price trace
-    predicted_price = predictions_dict[ticker][0][0]
+    predicted_price = predictions_dict[ticker]
     predicted_date = stock_data.index[-1] + timedelta(days=1)
     fig.add_trace(go.Scatter(x=[predicted_date], y=[predicted_price], mode='markers', name='Predicted Close', marker=dict(color='red', size=10)))
 
